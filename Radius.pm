@@ -19,7 +19,7 @@ use strict;
 use FileHandle;
 use IO::Socket;
 use IO::Select;
-use MD5;
+use Digest::MD5;
 use Data::Dumper;
 use Data::HexDump;
 
@@ -29,7 +29,7 @@ require Exporter;
 
 @ISA = qw(Exporter);
 @EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT);
-$VERSION = '0.08';
+$VERSION = '0.09';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -125,7 +125,9 @@ sub check_pwd {
 		{ Name => 2, Value => $pwd, Type => 'string' }
 	);
 
-	$self->send_packet (ACCESS_REQUEST) && $self->recv_packet == ACCESS_ACCEPT;
+	$self->send_packet(ACCESS_REQUEST);
+	my $rcv = $self->recv_packet();
+	return (defined($rcv) and $rcv == ACCESS_ACCEPT);
 }
 
 sub clear_attributes {
@@ -268,8 +270,7 @@ sub calc_authenticator {
 	$self->set_error;
 
 	$hdr = pack('C C n', $type, $id, $length);
-	$ct = new MD5;
-	$ct->reset ();
+	$ct = Digest::MD5->new;
 	$ct->add ($hdr, $self->{'authenticator'}, $self->{'attributes'}, $self->{'secret'});
 
 	$ct->digest();
@@ -281,8 +282,7 @@ sub gen_authenticator {
 
 	$self->set_error;
 
-	$ct = new MD5;
-	$ct->reset ();
+	$ct = Digest::MD5->new;
 	# the following could be improved a lot
 	$ct->add (sprintf("%08x%04x", time, $$), $self->{'attributes'} || '');
 
@@ -298,8 +298,7 @@ sub encrypt_pwd {
 	# this only works for passwords <= 16 chars, anyone use longer passwords?
 	$pwd .= "\0" x (16 - length($pwd) % 16);
 	@pwdp = unpack('C16', pack('a16', $pwd));
-	$ct = new MD5;
-	$ct->reset ();
+	$ct = Digest::MD5->new;
 	$ct->add ($self->{'secret'}, $self->{'authenticator'});
 	@xor = unpack('C16', $ct->digest());
 	for $i (0..15) {

@@ -5,7 +5,7 @@ WriteMakefile(
 			  'NAME'	=> 'Authen::Radius',
 			  'VERSION_FROM' => 'Radius.pm', # finds $VERSION
 			  'PREREQ_PM' => {
-							  'MD5' => 1.7,
+							  'Digest::MD5' => 2.20,
 							  'IO' => 1.12,
 							  'Data::Dumper' => 1,
 							  'Data::HexDump' => 0.02

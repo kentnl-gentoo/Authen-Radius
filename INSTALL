@@ -4,7 +4,7 @@
 Before you can install RadiusPerl, you'll have to make sure the following
 modules are installed first :
 
-	* MD5 1.7 or higher 
+	* Digest::MD5 2.20 or higher 
 	* IO 1.12 or higher
 	* Data::HexDump 0.02 or higher
 
@@ -36,5 +36,4 @@ works OK. Doing a 'make test' will first ask you for each of these.
 
 See the file 'README' for general notes on RadiusPerl.
 
-Carl Declerck.
-
+Carl Declerck, Andrew Zhilenko
