@@ -12,7 +12,7 @@
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
-# 	$Id: Radius.pm,v 1.14 2004/03/23 06:51:06 andrew Exp $
+# 	$Id: Radius.pm,v 1.16 2004/12/18 04:46:44 andrew Exp $
 
 package Authen::Radius;
 
@@ -31,7 +31,7 @@ require Exporter;
 @ISA = qw(Exporter);
 @EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT
 			 ACCOUNTING_REQUEST ACCOUNTING_RESPONSE ACCOUNTING_STATUS);
-$VERSION = '0.10';
+$VERSION = '0.12';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -170,17 +170,18 @@ sub get_attributes {
 	my ($attrs) = $self->{'attributes'};
 
 	$self->set_error;
+	my $vendor_specific = $dict_name{'Vendor-Specific'}{'id'};
 
 	while (length($attrs)) {
 		($id, $length, $attrs) = unpack('C C a*', $attrs);
 		($rawvalue, $attrs) = unpack('a' . ($length - 2) . ' a*', $attrs);
-		if( $id==$dict_name{'Vendor-Specific'}{'id'} ) {
+		if ( defined($vendor_specific) and $id == $vendor_specific ) {
 			($vendor_id, $id, $length, $rawvalue) = unpack('N C C a*', $rawvalue);
 			$vendor = defined $dict_vendor_id{$vendor_id}{'name'} ? $dict_vendor_id{$vendor_id}{'name'} : $vendor_id;
 		} else {
 			$vendor = 'not defined';
 		}
-		$type = $dict_id{$vendor}{$id}{'type'};
+		$type = $dict_id{$vendor}{$id}{'type'} || '';
 		if ($type eq "string") {
 			if ($id == 2 && $vendor eq 'not defined' ) {
 				$value = '<encrypted>';
@@ -339,7 +340,9 @@ sub load_dictionary {
 	my ($file) = @_;
 	my ($fh, $cmd, $name, $id, $type, $vendor);
 
-	$file = "/etc/raddb/dictionary" unless $file;
+	unless ($file) {
+		$file = "/etc/raddb/dictionary";
+	}
 	# prevent infinite loop in the include files
 	return undef if exists($included_files{$file});
 	$included_files{$file} = 1;
@@ -429,7 +432,7 @@ Authen::Radius - provide simple Radius client facilities
   print "auth result=", $r->check_pwd('myname', 'mypwd'), "\n";
 
   $r = new Authen::Radius(Host => 'myserver', Secret => 'mysecret');
-  Authen::Radius->load_dictionary;
+  Authen::Radius->load_dictionary();
   $r->add_attributes (
   		{ Name => 'User-Name', Value => 'myname' },
   		{ Name => 'Password', Value => 'mypwd' },
@@ -440,9 +443,9 @@ Authen::Radius - provide simple Radius client facilities
   		{ Name => 'h323-return-code', Value => '0' }, # Cisco AV pair
 		{ Name => 'Digest-Attributes', Value => { Method => 'REGISTER' } }
   );
-  $r->send_packet (1) and $type = $r->recv_packet;
+  $r->send_packet(ACCESS_REQUEST) and $type = $r->recv_packet();
   print "server response type = $type\n";
-  for $a ($r->get_attributes) {
+  for $a ($r->get_attributes()) {
   	print "attr: name=$a->{'Name'} value=$a->{'Value'}\n";
   }
 

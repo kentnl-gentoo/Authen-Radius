@@ -1,5 +1,10 @@
 Revision history for Perl extension Radius.
 
+0.12 Fri Dec 17 19:00:00 2004
+    - Include the default set of radius dictionaries with the module,
+		so it can be used on the generic system without having to install
+		extra components from the RADIUS server.
+
 0.11 Mon Mar 22 22:51:00 2004
 	- Fixed incorrect constant definition for ACCESS_REJECT 
 		(thanks to Alexey Antipov for the error report)

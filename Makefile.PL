@@ -4,6 +4,7 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
 			  'NAME'	=> 'Authen::Radius',
 			  'VERSION_FROM' => 'Radius.pm', # finds $VERSION
+			  'PPM_INSTALL_SCRIPT' => 'install-radius-db.PL',
 			  'PREREQ_PM' => {
 							  'Digest::MD5' => 2.20,
 							  'IO' => 1.12,

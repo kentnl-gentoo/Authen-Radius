@@ -1,4 +1,4 @@
-# 	$Id: test.pl,v 1.6 2004/03/07 19:45:30 andrew Exp $
+# 	$Id: test.pl,v 1.7 2004/12/18 04:38:30 andrew Exp $
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
@@ -27,7 +27,7 @@ print "Enter this user's password: "; chomp ($pwd = <STDIN>);
 
 $t = 2;
 if ($host ne '') {
-	$r = new Authen::Radius(Host => $host, Secret => $secret);
+	$r = new Authen::Radius(Host => $host, Secret => $secret, Debug => 1);
 	print defined($r) ? "" : "not ", "ok $t\n"; $t++;
 	#Authen::Radius->load_dictionary;
 	print $r->check_pwd($user, $pwd) ? "" : "not ", "ok $t\n"; $t++;
