@@ -1,3 +1,4 @@
+# 	$Id: test.pl,v 1.6 2004/03/07 19:45:30 andrew Exp $
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
@@ -25,16 +26,22 @@ print "Enter a username to be validated: "; chomp ($user = <STDIN>);
 print "Enter this user's password: "; chomp ($pwd = <STDIN>);
 
 $t = 2;
-$r = new Authen::Radius(Host => $host, Secret => $secret);
-print defined $r ? "" : "not ", "ok $t\n"; $t++;
+if ($host ne '') {
+	$r = new Authen::Radius(Host => $host, Secret => $secret);
+	print defined($r) ? "" : "not ", "ok $t\n"; $t++;
+	#Authen::Radius->load_dictionary;
+	print $r->check_pwd($user, $pwd) ? "" : "not ", "ok $t\n"; $t++;
+	@a = $r->get_attributes;
+	print $#a != -1 ? "" : "not ", "ok $t\n"; $t++;
+	#for $a (@a) {
+	#	print "attr: name=$a->{'Name'} value=$a->{'Value'}\n";
+	#}
+} else {
+	foreach my $t (2..4) {
+		print "skipped $t\n";
+	}
+}
 
-#Authen::Radius->load_dictionary;
-print $r->check_pwd($user, $pwd) ? "" : "not ", "ok $t\n"; $t++;
-@a = $r->get_attributes;
-print $#a != -1 ? "" : "not ", "ok $t\n"; $t++;
-#for $a (@a) {
-#	print "attr: name=$a->{'Name'} value=$a->{'Value'}\n";
-#}
 
 exit;
 

@@ -12,7 +12,7 @@
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
-# 	$Id: Radius.pm,v 1.13 2004/03/07 08:12:57 andrew Exp $
+# 	$Id: Radius.pm,v 1.14 2004/03/23 06:51:06 andrew Exp $
 
 package Authen::Radius;
 
@@ -45,10 +45,11 @@ my $debug = 0;
 
 $dict_id{'not defined'}{1}{'type'} = 'string';	# set 'username' attr type to string
 $dict_id{'not defined'}{2}{'type'} = 'string';	# set 'password' attr type to string
+$dict_id{'not defined'}{4}{'type'} = 'ipaddr';	# set 'NAS-IP-Address' attr type to string
 
 use constant ACCESS_REQUEST               => 1;
 use constant ACCESS_ACCEPT                => 2;
-use constant ACCESS_REJECT                => 2;
+use constant ACCESS_REJECT                => 3;
 use constant ACCOUNTING_REQUEST           => 4;
 use constant ACCOUNTING_RESPONSE          => 5;
 use constant ACCOUNTING_STATUS            => 6;
