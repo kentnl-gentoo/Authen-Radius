@@ -24,7 +24,7 @@ require AutoLoader;
 
 @ISA = qw(Exporter AutoLoader);
 @EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT);
-$VERSION = '0.04';
+$VERSION = '0.05';
 
 my (%dict_id, %dict_name, %dict_val);
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -216,6 +216,7 @@ sub encrypt_pwd {
 	$self->set_error;
 
 	# this only works for passwords <= 16 chars, anyone use longer passwords?
+	$pwd .= "\0" x (16 - length($pwd) % 16);
 	@pwdp = unpack('C16', pack('a16', $pwd));
 	$ct = new MD5;
 	$ct->reset ();

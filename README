@@ -1,5 +1,5 @@
 
-This is RadiusPerl version 0.04. RadiusPerl is a Perl 5 module (Radius.pm)
+This is RadiusPerl version 0.05. RadiusPerl is a Perl 5 module (Radius.pm)
 which allows you to authenticate/account usernames from a Radius server.
 
 IMPORTANT: As of v0.04 the name of this module has changed to Authen::Radius,

@@ -1,5 +1,9 @@
 Revision history for Perl extension Radius.
 
+0.05  Thu May 01 12:08:12 1997
+	- Bugfix to pad passwords up to nearest multiple of 16 (thanks to
+	  "Mark R. Levinson" <mrl@isc.upenn.edu>)
+
 0.04  Mon Mar 31 20:04:33 1997
 	- changed module name to Authen::Radius
 	- added check_pwd() wrapper method (doesn't need a dictionary!) for 
