@@ -7,11 +7,12 @@
 # policy.                                                                   #
 #                                                                           #
 # Modified by Olexander Kapitanenko <kapitan@portaone.com>,                 #
-#             Andrew Zhilenko <andrew@portaone.com>, 2002, 2003.            #
+#             Andrew Zhilenko <andrew@portaone.com>, 2002-2004.             #
 #                                                                           #
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
+# 	$Id: Radius.pm,v 1.13 2004/03/07 08:12:57 andrew Exp $
 
 package Authen::Radius;
 
@@ -28,8 +29,9 @@ use vars qw($VERSION @ISA @EXPORT);
 require Exporter;
 
 @ISA = qw(Exporter);
-@EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT);
-$VERSION = '0.09';
+@EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT
+			 ACCOUNTING_REQUEST ACCOUNTING_RESPONSE ACCOUNTING_STATUS);
+$VERSION = '0.10';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -44,14 +46,17 @@ my $debug = 0;
 $dict_id{'not defined'}{1}{'type'} = 'string';	# set 'username' attr type to string
 $dict_id{'not defined'}{2}{'type'} = 'string';	# set 'password' attr type to string
 
-sub ACCESS_REQUEST { 1; }
-sub ACCESS_ACCEPT  { 2; }
-sub ACCESS_REJECT  { 3; }
+use constant ACCESS_REQUEST               => 1;
+use constant ACCESS_ACCEPT                => 2;
+use constant ACCESS_REJECT                => 2;
+use constant ACCOUNTING_REQUEST           => 4;
+use constant ACCOUNTING_RESPONSE          => 5;
+use constant ACCOUNTING_STATUS            => 6;
 
 sub new {
 	my $class = shift;
 	my %h = @_;
-	my ($host, $port);
+	my ($host, $port, $service);
 	my $self = {};
 
 	bless $self, $class;
@@ -62,8 +67,19 @@ sub new {
 	return $self->set_error('ENOHOST') unless $h{'Host'};
 	($host, $port) = split(/:/, $h{'Host'});
 
-	$port = getservbyname('radius', 'udp') unless $port;
-	$port = 1645 unless $port;
+	$service = $h{'Service'} ? $h{'Service'} : 'radius';
+
+	$port = getservbyname($service, 'udp') unless $port;
+
+	unless ($port) {
+		my %services = ( radius => 1645, radacct => 1646,
+						 'radius-acct' => 1813 );
+		if (exists($services{$service})) {
+			$port = $services{$service};
+		} else {
+		  return $self->set_error('EBADSERV');
+		}
+	}
 
 	$self->{'timeout'} = $h{'TimeOut'} ? $h{'TimeOut'} : 5;
 	$self->{'secret'} = $h{'Secret'};
@@ -82,11 +98,17 @@ sub new {
 sub send_packet {
 	my ($self, $type) = @_;
 	my ($data);
+	my $length = 20 + length($self->{'attributes'});
 
 	$self->set_error;
-
-	$self->gen_authenticator unless defined $self->{'authenticator'};
-	$data = pack('C C n', $type, $request_id, 20 + length($self->{'attributes'}))
+	if ($type == ACCOUNTING_REQUEST) {
+	  $self->{'authenticator'} = "\0" x 16;
+	  $self->{'authenticator'} =
+	    $self->calc_authenticator($type, $request_id, $length)
+	} else {
+	  $self->gen_authenticator unless defined $self->{'authenticator'};
+	}
+	$data = pack('C C n', $type, $request_id, $length)
 				. $self->{'authenticator'} . $self->{'attributes'};
 	$request_id = ($request_id + 1) & 0xff;
 	if ($debug) {
@@ -117,12 +139,13 @@ sub recv_packet {
 }
 
 sub check_pwd {
-	my ($self, $name, $pwd) = @_;
+	my ($self, $name, $pwd, $nas) = @_;
 
 	$self->clear_attributes;
 	$self->add_attributes (
 		{ Name => 1, Value => $name, Type => 'string' },
-		{ Name => 2, Value => $pwd, Type => 'string' }
+		{ Name => 2, Value => $pwd, Type => 'string' },
+		{ Name => 4, Value => $nas || '127.0.0.1', Type => 'ipaddr' }
 	);
 
 	$self->send_packet(ACCESS_REQUEST);
@@ -192,7 +215,7 @@ sub get_attributes {
 		);
 	}
 
-	@a;
+	return @a;
 }
 
 sub add_attributes {
@@ -208,9 +231,10 @@ sub add_attributes {
 		if ($type eq "string") {
 			$value = $a->{'Value'};
 			if ($id == 2 && $vendor eq 'not defined' ) {
-				$self->gen_authenticator;
+				$self->gen_authenticator();
 				$value = $self->encrypt_pwd($value);
 			}
+			$value = substr($value, 0, 253);
 		} elsif ($type eq "integer") {
 			my $enc_value;
 			if ( defined $dict_val{$id}{$a->{'Value'}}{'id'} ) {
@@ -223,6 +247,7 @@ sub add_attributes {
 			$value = inet_aton($a->{'Value'});
 		} elsif ($type eq "avpair") {
 			$value = $a->{'Name'}.'='.$a->{'Value'};
+			$value = substr($value, 0, 253);
 		} elsif ($type eq 'sublist') {
 		    # Digest attributes look like:
 			# Digest-Attributes                = 'Method = "REGISTER"'
@@ -259,7 +284,7 @@ sub add_attributes {
 			$self->{'attributes'} .= pack('C C', $dict_name{'Vendor-Specific'}{'id'}, length($value) + 2) . $value;
 		}
 	}
-	1;
+	return 1;
 }
 
 
@@ -291,21 +316,20 @@ sub gen_authenticator {
 
 sub encrypt_pwd {
 	my ($self, $pwd) = @_;
-	my ($i, $ct, @pwdp, @xor);
+	my ($i, $ct, @pwdp, @encrypted);
 
 	$self->set_error;
+	$ct = Digest::MD5->new();
 
-	# this only works for passwords <= 16 chars, anyone use longer passwords?
-	$pwd .= "\0" x (16 - length($pwd) % 16);
-	@pwdp = unpack('C16', pack('a16', $pwd));
-	$ct = Digest::MD5->new;
-	$ct->add ($self->{'secret'}, $self->{'authenticator'});
-	@xor = unpack('C16', $ct->digest());
-	for $i (0..15) {
-		$pwdp[$i] ^= $xor[$i];
+	my $non_16 = length($pwd) % 16;
+	$pwd .= "\0" x (16 - $non_16) if $non_16;
+	@pwdp = unpack('a16' x (length($pwd) / 16), $pwd);
+	for $i (0..$#pwdp) {
+		my $authent = $i == 0 ? $self->{'authenticator'} : $encrypted[$i - 1];
+		$ct->add($self->{'secret'},  $authent);
+		$encrypted[$i] = $pwdp[$i] ^ $ct->digest();
 	}
-
-	pack('C' . length($pwd), @pwdp);
+	return join('',@encrypted);
 }
 use vars qw(%included_files);
 
@@ -346,7 +370,7 @@ sub load_dictionary {
 		} elsif (lc($cmd) eq '$include') {
 			my @path = split("/", $file);
 			pop @path; # remove the filename at the end
-			my $path = join("/", @path, $name);
+			my $path = ( $name =~ /^\// ) ? $name : join("/", @path, $name);
 			load_dictionary('', $path);
 		}
 	}
@@ -373,14 +397,15 @@ sub strerror {
 	my ($self, $error) = @_;
 
 	my %errors = (
-		'ENONE',		'none',
+		'ENONE',	'none',
 		'ESELECTFAIL',	'select creation failed',
-		'ETIMEOUT',		'timed out waiting for packet',
+		'ETIMEOUT',	'timed out waiting for packet',
 		'ESOCKETFAIL',	'socket creation failed',
-		'ENOHOST',		'no host specified',
-		'EBADAUTH',		'bad response authenticator',
+		'ENOHOST',	'no host specified',
+		'EBADAUTH',	'bad response authenticator',
 		'ESENDFAIL',	'send failed',
-		'ERECVFAIL',	'receive failed'
+		'ERECVFAIL',	'receive failed',
+		'EBADSERV',	'unrecognized service'
 	);
 
 	return $errors{$radius_error} unless ref($self);
@@ -407,6 +432,10 @@ Authen::Radius - provide simple Radius client facilities
   $r->add_attributes (
   		{ Name => 'User-Name', Value => 'myname' },
   		{ Name => 'Password', Value => 'mypwd' },
+# RFC 2865 http://www.ietf.org/rfc/rfc2865.txt calls this attribute
+# User-Password. Check your local RADIUS dictionary to find
+# out which name is used on your system
+#  		{ Name => 'User-Password', Value => 'mypwd' },
   		{ Name => 'h323-return-code', Value => '0' }, # Cisco AV pair
 		{ Name => 'Digest-Attributes', Value => { Method => 'REGISTER' } }
   );
@@ -416,7 +445,7 @@ Authen::Radius - provide simple Radius client facilities
   	print "attr: name=$a->{'Name'} value=$a->{'Value'}\n";
   }
 
-=head1 DESCRIPTION
+=head1  DESCRIPTION
 
 The C<Authen::Radius> module provides a simple class that allows you to 
 send/receive Radius requests/responses to/from a Radius server.
@@ -425,14 +454,18 @@ send/receive Radius requests/responses to/from a Radius server.
 
 =over 4
 
-=item new ( Host => HOST, Secret => SECRET [, TimeOut => TIMEOUT] [, Debug => Bool])
+=item new ( Host => HOST, Secret => SECRET [, TimeOut => TIMEOUT] [,Service => SERVICE] [, Debug => Bool])
 
 Creates & returns a blessed reference to a Radius object, or undef on
 failure.  Error status may be retrieved with C<Authen::Radius::get_error>
 (errorcode) or C<Authen::Radius::strerror> (verbose error string).
+
+The default C<Service> is C<radius>, the alternative is C<radius-acct>.
 If you do not specify port in the C<Host> as a C<hostname:port>, then port
 specified in your F</etc/services> will be used. If there is nothing
-there, and you did not specify port either then default is 1645.
+there, and you did not specify port either then default is 1645 for
+C<radius> and 1813 for C<radius-acct>.
+
 Optional parameter C<Debug> with a Perl "true" value turns on debugging
 (verbose mode).
 
@@ -450,11 +483,13 @@ argument is specified, or dies. NOTE: you need to load valid dictionary
 if you plan to send Radius requests with other attributes than just
 C<User-Name>/C<Password>.
 
-=item check_pwd ( USERNAME, PASSWORD )
+=item check_pwd ( USERNAME, PASSWORD [,NASIPADDRESS] )
 
-Checks with the Radius server if the specified C<PASSWORD> is valid for user 
-C<USERNAME>. This method is actually a wrapper for subsequent calls to
-C<clear_attributes>, C<add_attributes>, C<send_packet> and C<recv_packet>. It 
+Checks with the Radius server if the specified C<PASSWORD> is valid for user
+C<USERNAME>. Unless C<NASIPADDRESS> is soecified, 127.0.0.1 will
+be placed in the NAS-IP-Address attribute.
+This method is actually a wrapper for subsequent calls to
+C<clear_attributes>, C<add_attributes>, C<send_packet> and C<recv_packet>. It
 returns 1 if the C<PASSWORD> is correct, or undef otherwise.
 
 =item add_attributes ( { Name => NAME, Value => VALUE [, Type => TYPE] [, Vendor => VENDOR] }, ... )
@@ -483,8 +518,9 @@ Clears all attributes for the current object.
 
 Packs up a Radius packet based on the current secret & attributes and
 sends it to the server with a Request type of C<REQUEST_TYPE>. Exported
-C<REQUEST_TYPE> methods are 'C<ACCESS_REQUEST>', 'C<ACCESS_ACCEPT>' 
-and 'C<ACCESS_REJECT>'. Returns the number of bytes sent, or undef on failure.
+C<REQUEST_TYPE> methods are 'C<ACCESS_REQUEST>', 'C<ACCESS_ACCEPT>' ,
+'C<ACCESS_REJECT>', 'C<ACCOUNTING_REQUEST>' and 'C<ACCOUNTING_RESPONSE>'.
+Returns the number of bytes sent, or undef on failure.
 
 =item recv_packet
 

@@ -1,5 +1,20 @@
 Revision history for Perl extension Radius.
 
+0.10 Fri Mar 05 21:00:00 2004
+	- Authenticator for the accounting requests (Thanks to
+		Brian Andrus for the patch provided)
+	- Support for password, longer than 16 characters (Thanks to
+		Will LaSala and Robert Tuttle for the problem report
+		and patches)
+	- Include NAS-IP-Address into the check_pwd to avoid error
+		"non-RFC packet error" from some of the RADIUS servers (Thanks
+		to Jacinta Alice Richardson, Bill Schoolfield and Ed Kubaitis
+		for the problem	report and patches)
+	- Modify the example in perldoc to avoid confusion with the
+		User-Pasword vs Password attribute. (Thanks to Didier
+		Conchaudron	for the problem report)
+	- Limit the maximum value length for string and avpair attributes
+
 0.09 Thu Jun 19 22:00:00 2003
 	- Replaced obsolete MD5 module with the Digest::MD5 (Thanks
 		Jonathan Earle for his patch).

@@ -33,6 +33,10 @@ Note that for 'make test' to work, you should have a Radius server running
 with the IP address & secret of the target machine in its clients file. You
 should also know a username & password in order to test if authentication
 works OK. Doing a 'make test' will first ask you for each of these.
+Also, if you plan to do something more complicated than just verify username &
+password - you should have the RADIUS dictionary file available on the
+host where you will run you radius client utility, and use load_dictionary
+before you will try to send any requests.
 
 See the file 'README' for general notes on RadiusPerl.
 
