@@ -6,37 +6,43 @@
 # All Rights Reserved. See the Perl Artistic License for copying & usage    #
 # policy.                                                                   #
 #                                                                           #
+# Modified by Olexander Kapitanenko <kapitan@portaone.com>,                 #
+#             Andrew Zhilenko <andrew@portaone.com>, 2002, 2003.            #
+#                                                                           #
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
 
 package Authen::Radius;
 
+use strict;
 use FileHandle;
 use IO::Socket;
 use IO::Select;
 use MD5;
+use Data::Dumper;
+use Data::HexDump;
 
 use vars qw($VERSION @ISA @EXPORT);
 
 require Exporter;
-require AutoLoader;
 
-@ISA = qw(Exporter AutoLoader);
+@ISA = qw(Exporter);
 @EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT);
-$VERSION = '0.05';
+$VERSION = '0.08';
 
-my (%dict_id, %dict_name, %dict_val);
+my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
 my ($radius_error) = 'ENONE';
+my $debug = 0;
 
 #
 # we'll need to predefine these attr types so we can do simple password
 # verification without having to load a dictionary
 #
 
-$dict_id{1}{'type'} = 'string';	# set 'username' attr type to string
-$dict_id{2}{'type'} = 'string';	# set 'password' attr type to string
+$dict_id{'not defined'}{1}{'type'} = 'string';	# set 'username' attr type to string
+$dict_id{'not defined'}{2}{'type'} = 'string';	# set 'password' attr type to string
 
 sub ACCESS_REQUEST { 1; }
 sub ACCESS_ACCEPT  { 2; }
@@ -51,6 +57,7 @@ sub new {
 	bless $self, $class;
 
 	$self->set_error;
+	$debug = $h{Debug};
 
 	return $self->set_error('ENOHOST') unless $h{'Host'};
 	($host, $port) = split(/:/, $h{'Host'});
@@ -60,6 +67,7 @@ sub new {
 
 	$self->{'timeout'} = $h{'TimeOut'} ? $h{'TimeOut'} : 5;
 	$self->{'secret'} = $h{'Secret'};
+	print STDERR "Using Radius server $host:$port\n" if $debug;
 	$self->{'sock'} = new IO::Socket::INET(
 				PeerAddr => $host,
 				PeerPort => $port,
@@ -81,7 +89,10 @@ sub send_packet {
 	$data = pack('C C n', $type, $request_id, 20 + length($self->{'attributes'}))
 				. $self->{'authenticator'} . $self->{'attributes'};
 	$request_id = ($request_id + 1) & 0xff;
-
+	if ($debug) {
+		print STDERR "Sending request:\n";
+		print HexDump $data;
+	}
 	$self->{'sock'}->send ($data) || $self->set_error('ESENDFAIL');
 }
 
@@ -95,6 +106,10 @@ sub recv_packet {
 	$sh->can_read($self->{'timeout'}) or return $self->set_error('ETIMEOUT');
 
 	$self->{'sock'}->recv ($data, 65536) or return $self->set_error('ERECVFAIL');
+	if ($debug) {
+		print STDERR "Received response:\n";
+		print HexDump $data;
+	}
 	($type, $id, $length, $auth, $self->{'attributes'}) = unpack('C C n a16 a*', $data);
 	return $self->set_error('EBADAUTH') if $auth ne $self->calc_authenticator($type, $id, $length);
 
@@ -106,8 +121,8 @@ sub check_pwd {
 
 	$self->clear_attributes;
 	$self->add_attributes (
-		{ Name => 1, Value => $name },
-		{ Name => 2, Value => $pwd }
+		{ Name => 1, Value => $name, Type => 'string' },
+		{ Name => 2, Value => $pwd, Type => 'string' }
 	);
 
 	$self->send_packet (ACCESS_REQUEST) && $self->recv_packet == ACCESS_ACCEPT;
@@ -125,27 +140,53 @@ sub clear_attributes {
 
 sub get_attributes {
 	my ($self) = @_;
-	my ($id, $length, $value, $type, $rawvalue, @a);
+	my ($vendor, $vendor_id, $id, $length, $value, $type, $rawvalue, @a);
 	my ($attrs) = $self->{'attributes'};
 
-	$self->set_error;	
+	$self->set_error;
 
 	while (length($attrs)) {
 		($id, $length, $attrs) = unpack('C C a*', $attrs);
 		($rawvalue, $attrs) = unpack('a' . ($length - 2) . ' a*', $attrs);
-		$type = $dict_id{$id}{'type'};
+		if( $id==$dict_name{'Vendor-Specific'}{'id'} ) {
+			($vendor_id, $id, $length, $rawvalue) = unpack('N C C a*', $rawvalue);
+			$vendor = defined $dict_vendor_id{$vendor_id}{'name'} ? $dict_vendor_id{$vendor_id}{'name'} : $vendor_id;
+		} else {
+			$vendor = 'not defined';
+		}
+		$type = $dict_id{$vendor}{$id}{'type'};
 		if ($type eq "string") {
-			$value = $rawvalue;
+			if ($id == 2 && $vendor eq 'not defined' ) {
+				$value = '<encrypted>';
+			} else {
+				$value = $rawvalue;
+			}
 		} elsif ($type eq "integer") {
 			$value = unpack('N', $rawvalue);
-			$value = $dict_val{$id}{$value} if defined $dict_val{$id}{$value};
+			$value = $dict_val{$id}{$value}{'name'} if defined $dict_val{$id}{$value}{'name'};
 		} elsif ($type eq "ipaddr") {
 			$value = inet_ntoa($rawvalue);
+		} elsif ($type eq "avpair") {
+			$value = $rawvalue;
+			$value =~ s/^.*=//;
+		} elsif ($type eq 'sublist') {
+			# never got a chance to test it, since it seems that Digest attributes only come from clients
+			my ($subid, $subvalue, $sublength, @values);
+			$value = ''; my $subrawvalue = $rawvalue;
+			while (length($subrawvalue)) {
+			    ($subid, $sublength, $subrawvalue) = unpack('C C a*', $subrawvalue);
+			    ($subvalue, $subrawvalue) = unpack('a' . ($sublength - 2) . ' a*', $subrawvalue);
+			    my $subname = $dict_val{$id}->{$subid}->{'name'};
+			    push @values, "$subname = \"$subvalue\"";
+			}
+			$value = join("; ", @values);
 		}
-		push (@a, {	'Name' => defined $dict_id{$id}{'name'} ? $dict_id{$id}{'name'} : $id,
+
+		push (@a, {	'Name' => defined $dict_id{$vendor}{$id}{'name'} ? $dict_id{$vendor}{$id}{'name'} : $id,
 					'Code' => $id,
 					'Value' => $value,
-					'RawValue' => $rawvalue }
+					'RawValue' => $rawvalue,
+					'Vendor' => $vendor }
 		);
 	}
 
@@ -154,32 +195,71 @@ sub get_attributes {
 
 sub add_attributes {
 	my ($self, @a) = @_;
-	my ($a, $id, $type, $value);
+	my ($a, $vendor, $id, $type, $value);
 
 	$self->set_error;
 
 	for $a (@a) {
 		$id = defined $dict_name{$a->{'Name'}}{'id'} ? $dict_name{$a->{'Name'}}{'id'} : int($a->{'Name'});
-		$type = defined $a->{'Type'} ? $a->{'Type'} : $dict_id{$id}{'type'};
+		$type = defined $a->{'Type'} ? $a->{'Type'} : $dict_name{$a->{'Name'}}{'type'};
+		$vendor = defined $a->{'Vendor'} ? ( defined $dict_vendor_name{ $a->{'Vendor'} }{'id'} ? $dict_vendor_name{ $a->{'Vendor'} }{'id'} : int($a->{'Vendor'}) ) : ( defined $dict_name{$a->{'Name'}}{'vendor'} ? $dict_vendor_name{ $dict_name{$a->{'Name'}}{'vendor'} }{'id'} : 'not defined' );
 		if ($type eq "string") {
 			$value = $a->{'Value'};
-			if ($id == 2) {
+			if ($id == 2 && $vendor eq 'not defined' ) {
 				$self->gen_authenticator;
 				$value = $self->encrypt_pwd($value);
 			}
 		} elsif ($type eq "integer") {
-			$value = pack('N', int($a->{'Value'}));
+			my $enc_value;
+			if ( defined $dict_val{$id}{$a->{'Value'}}{'id'} ) {
+				$enc_value = $dict_val{$id}{$a->{'Value'}}{'id'};
+			} else {
+				$enc_value = int($a->{'Value'});
+			}
+			$value = pack('N', $enc_value);
 		} elsif ($type eq "ipaddr") {
 			$value = inet_aton($a->{'Value'});
+		} elsif ($type eq "avpair") {
+			$value = $a->{'Name'}.'='.$a->{'Value'};
+		} elsif ($type eq 'sublist') {
+		    # Digest attributes look like:
+			# Digest-Attributes                = 'Method = "REGISTER"'
+			my $digest = $a->{'Value'};
+			my @pairs;
+			if (ref($digest)) {
+				next unless ref($digest) eq 'HASH';
+				foreach my $key (keys %{$digest}) {
+					push @pairs, [ $key => $digest->{$key} ];
+				}
+			} else {
+				# string
+				foreach my $z (split(/\"\; /, $digest)) {
+					my ($subname, $subvalue) = split(/\s+=\s+\"/, $z, 2);
+					$subvalue =~ s/\"$//;
+					push @pairs, [ $subname => $subvalue ];
+				}
+			}
+			$value = '';
+			foreach my $da (@pairs) {
+				my ($subname, $subvalue) = @{$da};
+				my $subid = $dict_val{$id}->{$subname}->{'id'};
+				next unless defined($subid);
+				$value .= pack('C C', $subid, length($subvalue) + 2) . $subvalue;
+			}
 		} else {
 			next;
 		}
-
-		$self->{'attributes'} .= pack('C C', $id, length($value) + 2) . $value;
+		print STDERR "Adding attribute $a->{Name} ($id) with value '$a->{Value}'\n" if $debug;
+		if ( $vendor eq 'not defined' ) {
+			$self->{'attributes'} .= pack('C C', $id, length($value) + 2) . $value;
+		} else {
+			$value = pack('N C C', $vendor, $id, length($value) + 2) . $value;
+			$self->{'attributes'} .= pack('C C', $dict_name{'Vendor-Specific'}{'id'}, length($value) + 2) . $value;
+		}
 	}
-
 	1;
 }
+
 
 sub calc_authenticator {
 	my ($self, $type, $id, $length) = @_;
@@ -204,7 +284,7 @@ sub gen_authenticator {
 	$ct = new MD5;
 	$ct->reset ();
 	# the following could be improved a lot
-	$ct->add (sprintf("%08x%04x", time, $$), $self->{'attributes'});
+	$ct->add (sprintf("%08x%04x", time, $$), $self->{'attributes'} || '');
 
 	$self->{'authenticator'} = $ct->digest();
 }
@@ -228,26 +308,47 @@ sub encrypt_pwd {
 
 	pack('C' . length($pwd), @pwdp);
 }
+use vars qw(%included_files);
 
 sub load_dictionary {
 	shift;
 	my ($file) = @_;
-	my ($fh, $cmd, $name, $id, $type);
+	my ($fh, $cmd, $name, $id, $type, $vendor);
 
 	$file = "/etc/raddb/dictionary" unless $file;
+	# prevent infinite loop in the include files
+	return undef if exists($included_files{$file});
+	$included_files{$file} = 1;
 	$fh = new FileHandle($file) or die "Can't open dictionary '$file' ($!)\n";
+	print STDERR "Loading dictionary $file\n" if $debug;
 
 	while (<$fh>) {
 		chomp;
-		($cmd, $name, $id, $type) = split(/\s+/);
+		($cmd, $name, $id, $type, $vendor) = split(/\s+/);
 		next if (!$cmd || $cmd =~ /^#/);
-		if ($cmd =~ /^attribute$/i) {
-			$dict_id{$id}{'name'} = $name;
-			$dict_id{$id}{'type'} = $type;
+		if (lc($cmd) eq 'attribute') {
+			if( !$vendor ) {
+				$dict_id{'not defined'}{$id}{'name'} = $name;
+				$dict_id{'not defined'}{$id}{'type'} = $type;
+			} else {
+				$dict_id{$vendor}{$id}{'name'} = $name;
+				$dict_id{$vendor}{$id}{'type'} = $type;
+			}
 			$dict_name{$name}{'id'} = $id;
 			$dict_name{$name}{'type'} = $type;
-		} elsif ($cmd =~ /^value$/i) {
-			$dict_val{$dict_name{$name}{'id'}}{$type} = $id;
+			$dict_name{$name}{'vendor'} = $vendor if $vendor;
+		} elsif (lc($cmd) eq 'value') {
+			next unless exists($dict_name{$name});
+			$dict_val{$dict_name{$name}->{'id'}}->{$type}->{'name'} = $id;
+			$dict_val{$dict_name{$name}->{'id'}}->{$id}->{'id'} = $type;
+		} elsif (lc($cmd) eq 'vendor') {
+			$dict_vendor_name{$name}{'id'} = $id;
+			$dict_vendor_id{$id}{'name'} = $name;
+		} elsif (lc($cmd) eq '$include') {
+			my @path = split("/", $file);
+			pop @path; # remove the filename at the end
+			my $path = join("/", @path, $name);
+			load_dictionary('', $path);
 		}
 	}
 	$fh->close;
@@ -287,7 +388,6 @@ sub strerror {
 	$errors{defined $error ? $error : $self->{'error'}};
 }
 
-	
 
 1;
 __END__
@@ -299,7 +399,7 @@ Authen::Radius - provide simple Radius client facilities
 =head1 SYNOPSIS
 
   use Authen::Radius;
-  
+
   $r = new Authen::Radius(Host => 'myserver', Secret => 'mysecret');
   print "auth result=", $r->check_pwd('myname', 'mypwd'), "\n";
 
@@ -307,7 +407,9 @@ Authen::Radius - provide simple Radius client facilities
   Authen::Radius->load_dictionary;
   $r->add_attributes (
   		{ Name => 'User-Name', Value => 'myname' },
-  		{ Name => 'Password', Value => 'mypwd' }
+  		{ Name => 'Password', Value => 'mypwd' },
+  		{ Name => 'h323-return-code', Value => '0' }, # Cisco AV pair
+		{ Name => 'Digest-Attributes', Value => { Method => 'REGISTER' } }
   );
   $r->send_packet (1) and $type = $r->recv_packet;
   print "server response type = $type\n";
@@ -324,11 +426,16 @@ send/receive Radius requests/responses to/from a Radius server.
 
 =over 4
 
-=item new ( Host => HOST, Secret => SECRET [, TimeOut => TIMEOUT] )
+=item new ( Host => HOST, Secret => SECRET [, TimeOut => TIMEOUT] [, Debug => Bool])
 
 Creates & returns a blessed reference to a Radius object, or undef on
-failure.  Error status may be retrieved with C<Authen::Radius::get_error> 
+failure.  Error status may be retrieved with C<Authen::Radius::get_error>
 (errorcode) or C<Authen::Radius::strerror> (verbose error string).
+If you do not specify port in the C<Host> as a C<hostname:port>, then port
+specified in your F</etc/services> will be used. If there is nothing
+there, and you did not specify port either then default is 1645.
+Optional parameter C<Debug> with a Perl "true" value turns on debugging
+(verbose mode).
 
 =back
 
@@ -338,9 +445,11 @@ failure.  Error status may be retrieved with C<Authen::Radius::get_error>
 
 =item load_dictionary ( [ DICTIONARY ] )
 
-Loads the definitions in the specified Radius dictionary file (standard 
-Livingston radiusd format). Tries to load 'C</etc/raddb/dictionary>' when no 
-argument is specified, or dies.
+Loads the definitions in the specified Radius dictionary file (standard
+Livingston radiusd format). Tries to load 'C</etc/raddb/dictionary>' when no
+argument is specified, or dies. NOTE: you need to load valid dictionary
+if you plan to send Radius requests with other attributes than just
+C<User-Name>/C<Password>.
 
 =item check_pwd ( USERNAME, PASSWORD )
 
@@ -349,20 +458,20 @@ C<USERNAME>. This method is actually a wrapper for subsequent calls to
 C<clear_attributes>, C<add_attributes>, C<send_packet> and C<recv_packet>. It 
 returns 1 if the C<PASSWORD> is correct, or undef otherwise.
 
-=item add_attributes ( { Name => NAME, Value => VALUE [, Type => TYPE] }, ... )
+=item add_attributes ( { Name => NAME, Value => VALUE [, Type => TYPE] [, Vendor => VENDOR] }, ... )
 
 Adds any number of Radius attributes to the current Radius object. Attributes
 are specified as a list of anon hashes. They may be C<Name>d with their 
 dictionary name (provided a dictionary has been loaded first), or with 
 their raw Radius attribute-type values. The C<Type> pair should be specified 
 when adding attributes that are not in the dictionary (or when no dictionary 
-was loaded). Values for C<TYPE> can be 'C<string>', 'C<integer>' or 'C<ipaddr>'.
+was loaded). Values for C<TYPE> can be 'C<string>', 'C<integer>', 'C<ipaddr>' or 'C<avpair>'.
 
 =item get_attributes
 
 Returns a list of references to anon hashes with the following key/value
 pairs : { Name => NAME, Code => RAWTYPE, Value => VALUE, RawValue =>
-RAWVALUE }. Each hash represents an attribute in the current object. The 
+RAWVALUE, Vendor => VENDOR }. Each hash represents an attribute in the current object. The 
 C<Name> and C<Value> pairs will contain values as translated by the 
 dictionary (if one was loaded). The C<Code> and C<RawValue> pairs always 
 contain the raw attribute type & value as received from the server.
@@ -399,7 +508,9 @@ for the specified C<ERRORCODE>.
 
 =head1 AUTHOR
 
-Carl Declerck <carl@miskatonic.inbe.net>
+Carl Declerck <carl@miskatonic.inbe.net> - original design
+Alexander Kapitanenko <kapitan@portaone.com> and Andrew Zhilenko <andrew@portaone.com> - later modifications.
+Andrew Zhilenko <andrew@portaone.com> is a current module's maintaner at CPAN.
 
 =cut
 

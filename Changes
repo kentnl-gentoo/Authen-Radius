@@ -1,5 +1,22 @@
 Revision history for Perl extension Radius.
 
+0.08 Sun Mar 24 23:00:00 2003
+	- Extra debug message when adding a new attribute
+
+0.07 Thu Feb 06 14:00:00 2003
+	- Support for the include command in the dictionaries
+	- Support for Digest-Attributes
+	- Bugfix for the Password attribute (attribute with id=2 should
+		be encrypted only for the undefined [default] vendor)
+	- Asked CPAN maintainers to be granted ownership on this module,
+		since the original author seem to be unavailable for quite
+		long time.
+	- Debug possibility (hexdump of the outgoing and incoming packets)
+
+0.06  Tue May 28 13:05:00 2002 (this version was never released to CPAN)
+	- Vendor support in the dictionaries
+	- Cisco AV pair attribute support
+
 0.05  Thu May 01 12:08:12 1997
 	- Bugfix to pad passwords up to nearest multiple of 16 (thanks to
 	  "Mark R. Levinson" <mrl@isc.upenn.edu>)
