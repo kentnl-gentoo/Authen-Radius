@@ -7,12 +7,12 @@
 # policy.                                                                   #
 #                                                                           #
 # Modified by Olexander Kapitanenko <kapitan@portaone.com>,                 #
-#             Andrew Zhilenko <andrew@portaone.com>, 2002-2004.             #
+#             Andrew Zhilenko <andrew@portaone.com>, 2002-2007.             #
 #                                                                           #
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
-# 	$Id: Radius.pm,v 1.16 2004/12/18 04:46:44 andrew Exp $
+# 	$Id: Radius.pm,v 1.17 2007/02/20 06:15:04 andrew Exp $
 
 package Authen::Radius;
 
@@ -30,8 +30,9 @@ require Exporter;
 
 @ISA = qw(Exporter);
 @EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT
-			 ACCOUNTING_REQUEST ACCOUNTING_RESPONSE ACCOUNTING_STATUS);
-$VERSION = '0.12';
+			 ACCOUNTING_REQUEST ACCOUNTING_RESPONSE ACCOUNTING_STATUS
+			DISCONNECT_REQUEST);
+$VERSION = '0.13';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -53,6 +54,7 @@ use constant ACCESS_REJECT                => 3;
 use constant ACCOUNTING_REQUEST           => 4;
 use constant ACCOUNTING_RESPONSE          => 5;
 use constant ACCOUNTING_STATUS            => 6;
+use constant DISCONNECT_REQUEST           => 40;
 
 sub new {
 	my $class = shift;
@@ -102,7 +104,7 @@ sub send_packet {
 	my $length = 20 + length($self->{'attributes'});
 
 	$self->set_error;
-	if ($type == ACCOUNTING_REQUEST) {
+	if ($type == ACCOUNTING_REQUEST || $type == DISCONNECT_REQUEST) {
 	  $self->{'authenticator'} = "\0" x 16;
 	  $self->{'authenticator'} =
 	    $self->calc_authenticator($type, $request_id, $length)
@@ -114,7 +116,7 @@ sub send_packet {
 	$request_id = ($request_id + 1) & 0xff;
 	if ($debug) {
 		print STDERR "Sending request:\n";
-		print HexDump $data;
+		print STDERR HexDump($data);
 	}
 	$self->{'sock'}->send ($data) || $self->set_error('ESENDFAIL');
 }
@@ -131,7 +133,7 @@ sub recv_packet {
 	$self->{'sock'}->recv ($data, 65536) or return $self->set_error('ERECVFAIL');
 	if ($debug) {
 		print STDERR "Received response:\n";
-		print HexDump $data;
+		print STDERR HexDump($data);
 	}
 	($type, $id, $length, $auth, $self->{'attributes'}) = unpack('C C n a16 a*', $data);
 	return $self->set_error('EBADAUTH') if $auth ne $self->calc_authenticator($type, $id, $length);
@@ -523,7 +525,8 @@ Clears all attributes for the current object.
 Packs up a Radius packet based on the current secret & attributes and
 sends it to the server with a Request type of C<REQUEST_TYPE>. Exported
 C<REQUEST_TYPE> methods are 'C<ACCESS_REQUEST>', 'C<ACCESS_ACCEPT>' ,
-'C<ACCESS_REJECT>', 'C<ACCOUNTING_REQUEST>' and 'C<ACCOUNTING_RESPONSE>'.
+'C<ACCESS_REJECT>', 'C<ACCOUNTING_REQUEST>', 'C<ACCOUNTING_RESPONSE>',
+and 'C<DISCONNECT_REQUEST>'.
 Returns the number of bytes sent, or undef on failure.
 
 =item recv_packet
