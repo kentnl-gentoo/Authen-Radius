@@ -1,4 +1,4 @@
-This is RadiusPerl version 0.13. RadiusPerl is a Perl 5 module (Radius.pm)
+This is RadiusPerl version 0.14. RadiusPerl is a Perl 5 module (Radius.pm)
 which allows you to communicate with a Radius server from Perl. You can
 just authenticate usernames/passwords via Radius, or comletely imitate
 AAA requests and process server response. 
@@ -19,8 +19,11 @@ I welcome any feedback, enhancements, new ideas etc. for this module. Please
 send them to carl@miskatonic.inbe.net or to the andrew@portaone.com (current
 maintainer of the module).
 
-RadiusPerl is (c)1997 Carl Declerck. See the Perl Artistic License for
-copying and usage policy.
+RadiusPerl is (c)1997 Carl Declerck. 
+
+See the Perl Artistic License 2.0 
+(http://www.perlfoundation.org/artistic_license_2_0) for copying and
+usage policy.
 
 That's it!
 

@@ -12,7 +12,7 @@
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
-# 	$Id: Radius.pm,v 1.17 2007/02/20 06:15:04 andrew Exp $
+# 	$Id: Radius.pm,v 1.20 2009/07/23 12:27:46 psv Exp $
 
 package Authen::Radius;
 
@@ -32,7 +32,7 @@ require Exporter;
 @EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT
 			 ACCOUNTING_REQUEST ACCOUNTING_RESPONSE ACCOUNTING_STATUS
 			DISCONNECT_REQUEST);
-$VERSION = '0.13';
+$VERSION = '0.14';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -99,11 +99,14 @@ sub new {
 }
 
 sub send_packet {
-	my ($self, $type) = @_;
+	my ($self, $type, $retransmit) = @_;
 	my ($data);
 	my $length = 20 + length($self->{'attributes'});
 
-	$self->set_error;
+	if (!$retransmit) {
+		$request_id = ($request_id + 1) & 0xff;
+	}
+	$self->set_error;    
 	if ($type == ACCOUNTING_REQUEST || $type == DISCONNECT_REQUEST) {
 	  $self->{'authenticator'} = "\0" x 16;
 	  $self->{'authenticator'} =
@@ -113,17 +116,16 @@ sub send_packet {
 	}
 	$data = pack('C C n', $type, $request_id, $length)
 				. $self->{'authenticator'} . $self->{'attributes'};
-	$request_id = ($request_id + 1) & 0xff;
 	if ($debug) {
 		print STDERR "Sending request:\n";
 		print STDERR HexDump($data);
 	}
-	$self->{'sock'}->send ($data) || $self->set_error('ESENDFAIL');
+	$self->{'sock'}->send($data) || $self->set_error('ESENDFAIL');
 }
 
 sub recv_packet {
-	my ($self) = @_;
-	my ($data, $type, $id, $length, $auth, $sh);
+	my ($self, $detect_bad_id) = @_;
+	my ($data, $type, $id, $length, $auth, $sh, $resp_attributes);
 
 	$self->set_error;
 
@@ -135,15 +137,23 @@ sub recv_packet {
 		print STDERR "Received response:\n";
 		print STDERR HexDump($data);
 	}
-	($type, $id, $length, $auth, $self->{'attributes'}) = unpack('C C n a16 a*', $data);
-	return $self->set_error('EBADAUTH') if $auth ne $self->calc_authenticator($type, $id, $length);
-
-	$type;
+	($type, $id, $length, $auth, $resp_attributes ) = unpack('C C n a16 a*', $data);
+	if ($detect_bad_id && defined($id) && ($id != $request_id) ) {
+        	return $self->set_error('EBADID');
+	}
+	
+	if ($auth ne $self->calc_authenticator($type, $id, $length, $resp_attributes)) {
+		return $self->set_error('EBADAUTH');
+	}
+	# rewrtite  attributes only in case of valid response
+	$self->{'attributes'} = $resp_attributes;
+	return $type;
 }
 
 sub check_pwd {
 	my ($self, $name, $pwd, $nas) = @_;
 
+	$nas = eval { $self->{'sock'}->sockhost() } unless defined($nas);
 	$self->clear_attributes;
 	$self->add_attributes (
 		{ Name => 1, Value => $name, Type => 'string' },
@@ -293,15 +303,16 @@ sub add_attributes {
 
 
 sub calc_authenticator {
-	my ($self, $type, $id, $length) = @_;
+	my ($self, $type, $id, $length, $attributes) = @_;
 	my ($hdr, $ct);
 
 	$self->set_error;
 
 	$hdr = pack('C C n', $type, $id, $length);
 	$ct = Digest::MD5->new;
-	$ct->add ($hdr, $self->{'authenticator'}, $self->{'attributes'}, $self->{'secret'});
-
+	$ct->add ($hdr, $self->{'authenticator'}, 
+                (defined($attributes)) ? $attributes : $self->{'attributes'}, 
+                $self->{'secret'});
 	$ct->digest();
 }
 
@@ -411,7 +422,8 @@ sub strerror {
 		'EBADAUTH',	'bad response authenticator',
 		'ESENDFAIL',	'send failed',
 		'ERECVFAIL',	'receive failed',
-		'EBADSERV',	'unrecognized service'
+		'EBADSERV',	'unrecognized service',
+		'EBADID',	'response to unknown request'
 	);
 
 	return $errors{$radius_error} unless ref($self);
@@ -492,8 +504,9 @@ C<User-Name>/C<Password>.
 =item check_pwd ( USERNAME, PASSWORD [,NASIPADDRESS] )
 
 Checks with the Radius server if the specified C<PASSWORD> is valid for user
-C<USERNAME>. Unless C<NASIPADDRESS> is soecified, 127.0.0.1 will
-be placed in the NAS-IP-Address attribute.
+C<USERNAME>. Unless C<NASIPADDRESS> is specified, the script will attempt
+to determine it's local IP address (IP address for the RADIUS socket) and
+this value will be placed in the NAS-IP-Address attribute.
 This method is actually a wrapper for subsequent calls to
 C<clear_attributes>, C<add_attributes>, C<send_packet> and C<recv_packet>. It
 returns 1 if the C<PASSWORD> is correct, or undef otherwise.
@@ -520,7 +533,7 @@ contain the raw attribute type & value as received from the server.
 
 Clears all attributes for the current object.
 
-=item send_packet ( REQUEST_TYPE )
+=item send_packet ( REQUEST_TYPE, RETRANSMIT )
 
 Packs up a Radius packet based on the current secret & attributes and
 sends it to the server with a Request type of C<REQUEST_TYPE>. Exported
@@ -529,12 +542,22 @@ C<REQUEST_TYPE> methods are 'C<ACCESS_REQUEST>', 'C<ACCESS_ACCEPT>' ,
 and 'C<DISCONNECT_REQUEST>'.
 Returns the number of bytes sent, or undef on failure.
 
-=item recv_packet
+If the RETRANSMIT parameter is provided and contains a non-zero value, then
+it is considered that we are re-sending the request, which was already sent
+previously. In this case the previous value of packet indentifier is used. 
+
+=item recv_packet ( DETECT_BAD_ID )
 
 Receives a Radius reply packet. Returns the Radius Reply type (see possible
 values for C<REQUEST_TYPE> in method C<send_packet>) or undef on failure. Note 
 that failure may be due to a failed recv() or a bad Radius response 
 authenticator. Use C<get_error> to find out.
+
+If the DETECT_BAD_ID parameter is provided and contains a non-zero value, then
+mathing of packet indentifier is performed before authenticator check and EBADID
+error returned in case when packet indentifier from response doesn't match to
+request. If the DETECT_BAD_ID is not provided or contains zero value then 
+EBADAUTH returned in such case.
 
 =item get_error
 

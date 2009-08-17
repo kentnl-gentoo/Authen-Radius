@@ -1,5 +1,13 @@
 Revision history for Perl extension Radius.
 
+0.14 Mon Aug 17 15:00:00 2009
+	- Authen::Radius is now distributed under the Perl Artistic
+		License v2.0
+	- Support for RADIUS retransmits
+	- For the "check_pwd" method plance the local socket's "real"
+		IP address into the NAS-IP-Address attribute
+		instead of 127.0.0.1
+	 
 0.13 Mon Feb 19 22:09:00 2006
 	- Packet-of-disconnect support (thanks to Kostas Kalevras for
 		the patch)
