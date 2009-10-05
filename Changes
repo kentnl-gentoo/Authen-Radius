@@ -1,5 +1,8 @@
 Revision history for Perl extension Radius.
 
+0.15 Mon Oct 05 12:00:00 2009
+	- Bugfixes in error handling
+
 0.14 Mon Aug 17 15:00:00 2009
 	- Authen::Radius is now distributed under the Perl Artistic
 		License v2.0
@@ -15,8 +18,8 @@ Revision history for Perl extension Radius.
 
 0.12 Fri Dec 17 19:00:00 2004
     - Include the default set of radius dictionaries with the module,
-		so it can be used on the generic system without having to install
-		extra components from the RADIUS server.
+		so it can be used on the generic system without having to
+		install extra components from the RADIUS server.
 
 0.11 Mon Mar 22 22:51:00 2004
 	- Fixed incorrect constant definition for ACCESS_REJECT 
