@@ -7,12 +7,12 @@
 # policy.                                                                   #
 #                                                                           #
 # Modified by Olexander Kapitanenko <kapitan@portaone.com>,                 #
-#             Andrew Zhilenko <andrew@portaone.com>, 2002-2007.             #
+#             Andrew Zhilenko <andrew@portaone.com>, 2002-2010.             #
 #                                                                           #
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
-# 	$Id: Radius.pm,v 1.21 2009/09/02 11:27:29 psv Exp $
+# 	$Id: Radius.pm,v 1.33 2010/01/14 08:20:50 andrew Exp $
 
 package Authen::Radius;
 
@@ -30,9 +30,10 @@ require Exporter;
 
 @ISA = qw(Exporter);
 @EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT
-			 ACCOUNTING_REQUEST ACCOUNTING_RESPONSE ACCOUNTING_STATUS
-			DISCONNECT_REQUEST);
-$VERSION = '0.15';
+			ACCOUNTING_REQUEST ACCOUNTING_RESPONSE ACCOUNTING_STATUS
+			DISCONNECT_REQUEST
+			COA_REQUEST);
+$VERSION = '0.17';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -55,6 +56,11 @@ use constant ACCOUNTING_REQUEST           => 4;
 use constant ACCOUNTING_RESPONSE          => 5;
 use constant ACCOUNTING_STATUS            => 6;
 use constant DISCONNECT_REQUEST           => 40;
+use constant COA_REQUEST                  => 43; 
+
+my $HMAC_MD5_BLCKSZ = 64;
+my $RFC3579_MSG_AUTH_ATTR_ID = 80;
+my $RFC3579_MSG_AUTH_ATTR_LEN = 18;
 
 sub new {
 	my $class = shift;
@@ -65,7 +71,7 @@ sub new {
 	bless $self, $class;
 
 	$self->set_error;
-	$debug = $h{Debug};
+	$debug = $h{'Debug'};
 
 	return $self->set_error('ENOHOST') unless $h{'Host'};
 	($host, $port) = split(/:/, $h{'Host'});
@@ -80,20 +86,26 @@ sub new {
 		if (exists($services{$service})) {
 			$port = $services{$service};
 		} else {
-		  return $self->set_error('EBADSERV');
+			return $self->set_error('EBADSERV');
 		}
 	}
 
 	$self->{'timeout'} = $h{'TimeOut'} ? $h{'TimeOut'} : 5;
 	$self->{'secret'} = $h{'Secret'};
+	$self->{'message_auth'}  = $h{'Rfc3579MessageAuth'};
 	print STDERR "Using Radius server $host:$port\n" if $debug;
-	$self->{'sock'} = new IO::Socket::INET(
+	my %io_sock_args = (
 				PeerAddr => $host,
 				PeerPort => $port,
 				Type => SOCK_DGRAM,
 				Proto => 'udp',
 				TimeOut => $self->{'timeout'}
-	) or return $self->set_error('ESOCKETFAIL', $@);
+	);
+	if ($h{'LocalAddr'}) {
+		$io_sock_args{'LocalAddr'} = $h{'LocalAddr'};
+	}
+	$self->{'sock'} = new IO::Socket::INET(%io_sock_args) 
+		or return $self->set_error('ESOCKETFAIL', $@);
 
 	$self;
 }
@@ -107,15 +119,38 @@ sub send_packet {
 		$request_id = ($request_id + 1) & 0xff;
 	}
 	$self->set_error;    
-	if ($type == ACCOUNTING_REQUEST || $type == DISCONNECT_REQUEST) {
-	  $self->{'authenticator'} = "\0" x 16;
-	  $self->{'authenticator'} =
-	    $self->calc_authenticator($type, $request_id, $length)
+	if ($type == ACCOUNTING_REQUEST || $type == DISCONNECT_REQUEST
+		|| $type == COA_REQUEST) {
+		$self->{'authenticator'} = "\0" x 16;
+		$self->{'authenticator'} =
+		$self->calc_authenticator($type, $request_id, $length)
 	} else {
-	  $self->gen_authenticator unless defined $self->{'authenticator'};
+		$self->gen_authenticator unless defined $self->{'authenticator'};
 	}
-	$data = pack('C C n', $type, $request_id, $length)
+
+	if ($self->{'message_auth'} && ($type == ACCESS_REQUEST)) {
+		$length += $RFC3579_MSG_AUTH_ATTR_LEN;
+		$data = pack('C C n', $type, $request_id, $length)
+				. $self->{'authenticator'}  
+				. $self->{'attributes'}
+				. pack('C C', $RFC3579_MSG_AUTH_ATTR_ID, $RFC3579_MSG_AUTH_ATTR_LEN) 
+				. "\0" x ($RFC3579_MSG_AUTH_ATTR_LEN - 2);
+
+		my $msg_authenticator = $self->hmac_md5($data, $self->{'secret'}); 
+		$data = pack('C C n', $type, $request_id, $length) 
+				. $self->{'authenticator'} 
+				. $self->{'attributes'}
+				. pack('C C', $RFC3579_MSG_AUTH_ATTR_ID, $RFC3579_MSG_AUTH_ATTR_LEN) 
+				. $msg_authenticator;
+		if ($debug) {
+			print STDERR "RFC3579 Message-Authenticator: "._ascii_to_hex($msg_authenticator).
+					" was added to request.\n";
+		}
+	} else {
+		$data = pack('C C n', $type, $request_id, $length)
 				. $self->{'authenticator'} . $self->{'attributes'};
+	}
+
 	if ($debug) {
 		print STDERR "Sending request:\n";
 		print STDERR HexDump($data);
@@ -139,7 +174,7 @@ sub recv_packet {
 	}
 	($type, $id, $length, $auth, $resp_attributes ) = unpack('C C n a16 a*', $data);
 	if ($detect_bad_id && defined($id) && ($id != $request_id) ) {
-        	return $self->set_error('EBADID');
+		return $self->set_error('EBADID');
 	}
 	
 	if ($auth ne $self->calc_authenticator($type, $id, $length, $resp_attributes)) {
@@ -147,6 +182,31 @@ sub recv_packet {
 	}
 	# rewrtite  attributes only in case of valid response
 	$self->{'attributes'} = $resp_attributes;
+	my $rfc3579_msg_auth;
+	foreach my $a ($self->get_attributes()) {
+		if ($a->{Code} == $RFC3579_MSG_AUTH_ATTR_ID) {
+			$rfc3579_msg_auth = $a->{Value};
+			last;
+		}	
+	}
+	if (defined($rfc3579_msg_auth)) {
+		$self->replace_attr_value($RFC3579_MSG_AUTH_ATTR_ID, 
+				"\0" x ($RFC3579_MSG_AUTH_ATTR_LEN - 2));
+		my $hmac_data = pack('C C n', $type, $id, $length) 
+						. $self->{'authenticator'}
+						. $self->{'attributes'};
+		my $calc_hmac = $self->hmac_md5($hmac_data, $self->{'secret'});
+		if ($calc_hmac ne $rfc3579_msg_auth) {
+			if ($debug) {
+				print STDERR "Received response with INVALID RFC3579 Message-Authenticator.\n";
+				print STDERR 'Received   '._ascii_to_hex($rfc3579_msg_auth)."\n";
+				print STDERR 'Calculated '._ascii_to_hex($calc_hmac)."\n";
+			}
+			return $self->set_error('EBADAUTH');
+		} elsif ($debug) {
+			print STDERR "Received response with VALID RFC3579 Message-Authenticator.\n";
+		}
+	}
 	return $type;
 }
 
@@ -213,10 +273,10 @@ sub get_attributes {
 			my ($subid, $subvalue, $sublength, @values);
 			$value = ''; my $subrawvalue = $rawvalue;
 			while (length($subrawvalue)) {
-			    ($subid, $sublength, $subrawvalue) = unpack('C C a*', $subrawvalue);
-			    ($subvalue, $subrawvalue) = unpack('a' . ($sublength - 2) . ' a*', $subrawvalue);
-			    my $subname = $dict_val{$id}->{$subid}->{'name'};
-			    push @values, "$subname = \"$subvalue\"";
+				($subid, $sublength, $subrawvalue) = unpack('C C a*', $subrawvalue);
+				($subvalue, $subrawvalue) = unpack('a' . ($sublength - 2) . ' a*', $subrawvalue);
+				my $subname = $dict_val{$id}->{$subid}->{'name'};
+				push @values, "$subname = \"$subvalue\"";
 			}
 			$value = join("; ", @values);
 		}
@@ -263,7 +323,7 @@ sub add_attributes {
 			$value = $a->{'Name'}.'='.$a->{'Value'};
 			$value = substr($value, 0, 253);
 		} elsif ($type eq 'sublist') {
-		    # Digest attributes look like:
+			# Digest attributes look like:
 			# Digest-Attributes                = 'Method = "REGISTER"'
 			my $digest = $a->{'Value'};
 			my @pairs;
@@ -301,6 +361,28 @@ sub add_attributes {
 	return 1;
 }
 
+sub replace_attr_value {
+	my ($self, $id, $value) = @_;
+	my $length = length($self->{'attributes'});
+	my $done = 0;
+	my $cur_pos = 0;
+	while ($cur_pos < $length) {
+		my ($cur_id, $cur_len) = unpack('C C', substr($self->{'attributes'}, $cur_pos, 2));
+		if ($cur_id == $id) {
+			if (length($value) != ($cur_len - 2)) {
+				if ($debug) {
+					print STDERR "Trying to replace attribute ($id) with value which has different length\n";
+				}
+				last;
+			}
+			substr($self->{'attributes'}, $cur_pos + 2, $cur_len - 2, $value);
+			$done = 1;
+			last;
+		}
+		$cur_pos += $cur_len;
+	}
+	return $done;
+}
 
 sub calc_authenticator {
 	my ($self, $type, $id, $length, $attributes) = @_;
@@ -311,8 +393,8 @@ sub calc_authenticator {
 	$hdr = pack('C C n', $type, $id, $length);
 	$ct = Digest::MD5->new;
 	$ct->add ($hdr, $self->{'authenticator'}, 
-                (defined($attributes)) ? $attributes : $self->{'attributes'}, 
-                $self->{'secret'});
+				(defined($attributes)) ? $attributes : $self->{'attributes'}, 
+				$self->{'secret'});
 	$ct->digest();
 }
 
@@ -321,12 +403,9 @@ sub gen_authenticator {
 	my ($ct);
 
 	$self->set_error;
-
-	$ct = Digest::MD5->new;
-	# the following could be improved a lot
-	$ct->add (sprintf("%08x%04x", time, $$), $self->{'attributes'} || '');
-
-	$self->{'authenticator'} = $ct->digest();
+	sub rint { int rand(2 ** 32 - 1) };
+	$self->{'authenticator'} =
+		pack "L4", rint(), rint(), rint(), rint();
 }
 
 sub encrypt_pwd {
@@ -398,20 +477,20 @@ sub load_dictionary {
 
 sub set_error {
 	my ($self, $error, $comment) = @_;
-    $@ = undef;
+	$@ = undef;
 	$radius_error = $self->{'error'} = (defined($error) ? $error : 'ENONE');
-    $error_comment = $self->{'error_comment'} = (defined($comment) ? $comment : '');
+	$error_comment = $self->{'error_comment'} = (defined($comment) ? $comment : '');
 	undef;
 }
 
 sub get_error {
 	my ($self) = @_;
 
-    if (!ref($self)) {
-	    return $radius_error;
-    } else {
-    	return $self->{'error'};
-    }
+	if (!ref($self)) {
+		return $radius_error;
+	} else {
+		return $self->{'error'};
+	}
 }
 
 sub strerror {
@@ -430,21 +509,49 @@ sub strerror {
 		'EBADID',	'response to unknown request'
 	);
 
-    if (!ref($self)) {
+	if (!ref($self)) {
 	    return $errors{$radius_error};
-    }
+	}
 	return $errors{ (defined($error) ? $error : $self->{'error'} ) };
 }
 
 sub error_comment {
 	my ($self) = @_;
 
-    if (!ref($self)) {
-	    return $error_comment;
-    } else {
+	if (!ref($self)) {
+		return $error_comment;
+	} else {
     	return $self->{'error_comment'};
-    }
+	}
 }
+
+sub hmac_md5 {
+	my ($self, $data, $key) = @_;
+	my $ct = Digest::MD5->new;
+
+	if (length($key) > $HMAC_MD5_BLCKSZ) {
+		$ct->add($key);
+		$key = $ct->digest();
+	}
+	my $ipad = $key ^ ("\x36" x $HMAC_MD5_BLCKSZ);
+	my $opad = $key ^ ("\x5c" x $HMAC_MD5_BLCKSZ);
+	$ct->reset();
+	$ct->add($ipad, $data);
+	my $digest1 = $ct->digest();
+	$ct->reset();
+	$ct->add($opad, $digest1);
+	return $ct->digest();
+}
+
+sub _ascii_to_hex {
+	my  ($string) = @_;
+	my $hex_res = '';
+	foreach my $cur_chr (unpack('C*',$string)) {
+		$hex_res .= sprintf("%02X ", $cur_chr);
+	}
+	return $hex_res;
+}
+
 
 1;
 __END__
@@ -487,7 +594,9 @@ send/receive Radius requests/responses to/from a Radius server.
 
 =over 4
 
-=item new ( Host => HOST, Secret => SECRET [, TimeOut => TIMEOUT] [,Service => SERVICE] [, Debug => Bool])
+=item new ( Host => HOST, Secret => SECRET [, TimeOut => TIMEOUT] 
+	[,Service => SERVICE] [, Debug => Bool] [, LocalAddr => hostname[:port]]
+	[,Rfc3579MessageAuth => Bool])
 
 Creates & returns a blessed reference to a Radius object, or undef on
 failure.  Error status may be retrieved with C<Authen::Radius::get_error>
@@ -502,6 +611,12 @@ C<radius> and 1813 for C<radius-acct>.
 Optional parameter C<Debug> with a Perl "true" value turns on debugging
 (verbose mode).
 
+Optional parameter C<LocalAddr> may contain local IP/host bind address from 
+which RADIUS packets are sent.
+
+Optional parameter C<Rfc3579MessageAuth> with a Perl "true" value turns on generating
+of Message-Authenticator for Access-Request (RFC3579, section 3.2).
+
 =back
 
 =head1 METHODS
@@ -513,12 +628,12 @@ Optional parameter C<Debug> with a Perl "true" value turns on debugging
 Loads the definitions in the specified Radius dictionary file (standard
 Livingston radiusd format). Tries to load 'C</etc/raddb/dictionary>' when no
 argument is specified, or dies. NOTE: you need to load valid dictionary
-if you plan to send Radius requests with other attributes than just
+if you plan to send RADIUS requests with attributes other than just
 C<User-Name>/C<Password>.
 
 =item check_pwd ( USERNAME, PASSWORD [,NASIPADDRESS] )
 
-Checks with the Radius server if the specified C<PASSWORD> is valid for user
+Checks with the RADIUS server if the specified C<PASSWORD> is valid for user
 C<USERNAME>. Unless C<NASIPADDRESS> is specified, the script will attempt
 to determine it's local IP address (IP address for the RADIUS socket) and
 this value will be placed in the NAS-IP-Address attribute.
@@ -554,7 +669,7 @@ Packs up a Radius packet based on the current secret & attributes and
 sends it to the server with a Request type of C<REQUEST_TYPE>. Exported
 C<REQUEST_TYPE> methods are 'C<ACCESS_REQUEST>', 'C<ACCESS_ACCEPT>' ,
 'C<ACCESS_REJECT>', 'C<ACCOUNTING_REQUEST>', 'C<ACCOUNTING_RESPONSE>',
-and 'C<DISCONNECT_REQUEST>'.
+'C<DISCONNECT_REQUEST>' and 'C<COA_REQUEST>'.
 Returns the number of bytes sent, or undef on failure.
 
 If the RETRANSMIT parameter is provided and contains a non-zero value, then
@@ -594,8 +709,10 @@ is generated by system call.
 =head1 AUTHOR
 
 Carl Declerck <carl@miskatonic.inbe.net> - original design
-Alexander Kapitanenko <kapitan@portaone.com> and Andrew Zhilenko <andrew@portaone.com> - later modifications.
-Andrew Zhilenko <andrew@portaone.com> is a current module's maintaner at CPAN.
+Alexander Kapitanenko <kapitan at portaone.com> and Andrew
+Zhilenko <andrew at portaone.com> - later modifications.
+
+Andrew Zhilenko <andrew at portaone.com> is the current module's maintaner at CPAN.
 
 =cut
 

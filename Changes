@@ -1,5 +1,13 @@
 Revision history for Perl extension Radius.
 
+0.17 Thu Jan 14 09:20:00 2010
+	- Support for RFC3579 - Message-Authenticator
+
+0.16 Mon Dec 14 13:34:00 2009
+	- Generate random authenticators
+	- Support for CoA request (thanks to Oleg Gawriloff for the patch)
+    - Ability to specify the source IP/port for outgoing packets
+     
 0.15 Mon Oct 05 12:00:00 2009
 	- Bugfixes in error handling
 

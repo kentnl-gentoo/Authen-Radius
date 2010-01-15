@@ -1,4 +1,4 @@
-# 	$Id: test.pl,v 1.7 2004/12/18 04:38:30 andrew Exp $
+# 	$Id: test.pl,v 1.8 2009/12/31 13:18:47 psv Exp $
 # Before `make install' is performed this script should be runnable with
 # `make test'. After `make install' it should work as `perl test.pl'
 
@@ -7,7 +7,7 @@
 # Change 1..1 below to 1..last_test_to_print .
 # (It may become useful if the test is moved to ./t subdirectory.)
 
-BEGIN {print "1..4\n";}
+BEGIN {print "1..5\n";}
 END {print "not ok 1\n" unless $loaded;}
 use Authen::Radius;
 $loaded = 1;
@@ -42,6 +42,21 @@ if ($host ne '') {
 	}
 }
 
+sub hex_to_ascii
+{
+	## Convert each two-digit hex number back to an ASCII character.
+	(my $str = shift) =~ s/([a-fA-F0-9]{2})/chr(hex $1)/eg;
+	return $str;
+}
+my $key = "Jefe";
+my $data = "what do ya want for nothing?";
+my $etalon_digest = hex_to_ascii("750c783e6ab0b503eaa86e310a5db738");
+my $digest = Authen::Radius::hmac_md5(undef, $data, $key);
+if ($etalon_digest eq $digest) {
+	print "ok 5\n";
+} else {
+	print "not ok 5\n";
+}
 
 exit;
 
