@@ -36,6 +36,7 @@ $INCLUDE dictionary.ascend
 $INCLUDE dictionary.xtradius
 $INCLUDE dictionary.quintum
 $INCLUDE dictionary.cisco
+$INCLUDE dictionary.rfc2869
 
 #
 #	Following are the proper new names. Use these.

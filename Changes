@@ -1,5 +1,15 @@
 Revision history for Perl extension Radius.
 
+0.19 Tue Nov 02 00:07:00 2010
+    - Improved support for CoA (thanks Oleg Gawriloff and Matej Vela)
+    - Ability to work with dictionaries in FreeRADIUS format 
+    	(thanks to Alexandr Kovalenko and Matej Vela)
+    - Support (partial) for WIMAX attributes 
+
+0.18 Sun Oct 05 01:00:00 2010 (this version was not released to CPAN,
+	only used for internal testing)
+    - Support for a list of multiple RADIUS servers (RADIUS cluster)
+
 0.17 Thu Jan 14 09:20:00 2010
 	- Support for RFC3579 - Message-Authenticator
 
