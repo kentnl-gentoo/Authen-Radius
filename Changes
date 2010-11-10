@@ -1,5 +1,8 @@
 Revision history for Perl extension Radius.
 
+0.20 Tue Nov 09 22:45:99 2010
+	- Fixed the bug with the incorrect encoding of Cisco AVPair attributes 
+
 0.19 Tue Nov 02 00:07:00 2010
     - Improved support for CoA (thanks Oleg Gawriloff and Matej Vela)
     - Ability to work with dictionaries in FreeRADIUS format 

@@ -8,11 +8,12 @@
 #                                                                           #
 # Modified by Olexander Kapitanenko <kapitan@portaone.com>,                 #
 #             Andrew Zhilenko <andrew@portaone.com>, 2002-2010.             #
+#             and the rest of PortaOne team.                                #
 #                                                                           #
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
-# 	$Id: Radius.pm,v 1.47 2010/11/02 07:08:53 andrew Exp $
+# 	$Id: Radius.pm,v 1.49 2010/11/10 06:52:02 andrew Exp $
 
 package Authen::Radius;
 
@@ -34,7 +35,7 @@ require Exporter;
 			DISCONNECT_REQUEST DISCONNECT_ACCEPT DISCONNECT_REJECT
 			COA_REQUEST COA_ACCEPT COA_REJECT COA_ACK COA_NAK);
 
-$VERSION = '0.19';
+$VERSION = '0.20';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -470,7 +471,7 @@ sub encodeValue ($$$$$) {
 	$new_value = inet_aton($value);
     } elsif ($type eq "avpair") {
 	$new_value = $name.'='.$value;
-	$new_value = substr($value, 0, 253);
+	$new_value = substr($new_value, 0, 253);
 # WiMAX
     } elsif ($type eq "combo-ip") {
 	if ($value =~ m/^\d+\.\d+\.\d+.\d+/) {
