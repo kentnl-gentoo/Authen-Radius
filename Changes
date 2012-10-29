@@ -1,7 +1,10 @@
 Revision history for Perl extension Radius.
 
-0.20 Tue Nov 09 22:45:99 2010
-	- Fixed the bug with the incorrect encoding of Cisco AVPair attributes 
+0.21 Mon Oct 29 09:00:00 2012
+    - Added support for attribute values for byte and short attribute types
+
+0.20 Tue Nov 09 22:45:59 2010
+    - Fixed the bug with the incorrect encoding of Cisco AVPair attributes 
 
 0.19 Tue Nov 02 00:07:00 2010
     - Improved support for CoA (thanks Oleg Gawriloff and Matej Vela)

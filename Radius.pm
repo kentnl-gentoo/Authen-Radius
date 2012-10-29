@@ -13,7 +13,7 @@
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
-# 	$Id: Radius.pm,v 1.49 2010/11/10 06:52:02 andrew Exp $
+# 	$Id: Radius.pm,v 1.51 2012/10/29 07:14:24 andrew Exp $
 
 package Authen::Radius;
 
@@ -35,7 +35,7 @@ require Exporter;
 			DISCONNECT_REQUEST DISCONNECT_ACCEPT DISCONNECT_REJECT
 			COA_REQUEST COA_ACCEPT COA_REJECT COA_ACK COA_NAK);
 
-$VERSION = '0.20';
+$VERSION = '0.21';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -358,7 +358,7 @@ sub clear_attributes {
 
 sub get_attributes {
 	my ($self) = @_;
-	my ($vendor, $vendor_id, $id, $length, $value, $type, $rawvalue, @a);
+	my ($vendor, $vendor_id, $name, $id, $length, $value, $type, $rawvalue, @a);
 	my ($attrs) = $self->{'attributes'};
 
 	$self->set_error;
@@ -373,6 +373,7 @@ sub get_attributes {
 		} else {
 			$vendor = 'not defined';
 		}
+		$name = defined $dict_id{$vendor}{$id}{'name'} ? $dict_id{$vendor}{$id}{'name'} : $id;
 		$type = $dict_id{$vendor}{$id}{'type'} || '';
 		$value = undef;
 		if ($type eq "string") {
@@ -383,7 +384,6 @@ sub get_attributes {
 			}
 		} elsif ($type eq "integer") {
 			$value = unpack('N', $rawvalue);
-			$value = $dict_val{$id}{$value}{'name'} if defined $dict_val{$id}{$value}{'name'};
 		} elsif ($type eq "ipaddr") {
 			$value = inet_ntoa($rawvalue);
 		} elsif ($type eq "avpair") {
@@ -396,7 +396,7 @@ sub get_attributes {
 			while (length($subrawvalue)) {
 				($subid, $sublength, $subrawvalue) = unpack('C C a*', $subrawvalue);
 				($subvalue, $subrawvalue) = unpack('a' . ($sublength - 2) . ' a*', $subrawvalue);
-				my $subname = $dict_val{$id}->{$subid}->{'name'};
+				my $subname = $dict_val{$name}->{$subid}->{'name'};
 				push @values, "$subname = \"$subvalue\"";
 			}
 			$value = join("; ", @values);
@@ -405,8 +405,12 @@ sub get_attributes {
 		} else {
 			print STDERR "Unknown type for attribute with id:'$id'. Check Radius dictionaries!\n" if $debug;
 		}
+		
+		if (defined $value) {
+			$value = $dict_val{$name}{$value}{'name'} if defined $dict_val{$name}{$value};
+		}
 
-		push (@a, {	'Name' => defined $dict_id{$vendor}{$id}{'name'} ? $dict_id{$vendor}{$id}{'name'} : $id,
+		push (@a, {	'Name' => $name,
 					'Code' => $id,
 					'Value' => $value,
 					'RawValue' => $rawvalue,
@@ -438,7 +442,12 @@ sub vendorID ($) {
 sub encodeValue ($$$$$) {
     my ($self, $vendor, $id, $type, $name, $value) = @_;
 
-    my $new_value;
+    my ($new_value, $enc_value);
+    if (defined $dict_val{$name}{$value}) {
+	$enc_value = $dict_val{$name}{$value}{'id'};
+    } else {
+	$enc_value = int($value);
+    }
     $type = '' unless defined $type;
     if ($type eq "string") {
 	$new_value = $value;
@@ -453,17 +462,11 @@ sub encodeValue ($$$$$) {
                 #           $value = pack('C', 0). substr($value, 0, 246);
                 #       }
     } elsif ($type eq "integer") {
-	my $enc_value;
-	if ( defined $dict_val{$id}{$value}{'id'} ) {
-	    $enc_value = $dict_val{$id}{$value}{'id'};
-	} else {
-	    $enc_value = int($value);
-	}
 	$new_value = pack('N', $enc_value);
     } elsif ($type eq "byte") {
-	$new_value = pack('C', $value);
+	$new_value = pack('C', $enc_value);
     } elsif ($type eq "short") {
-	$new_value = pack('S', $value);
+	$new_value = pack('S', $enc_value);
     } elsif ($type eq "signed") {
 	# there should be something else, since it is signed
 	$new_value = pack('N', $value);
@@ -715,8 +718,8 @@ sub load_dictionary {
 			}
 		} elsif ($cmd eq 'value') {
 			next unless exists($dict_name{$name});
-			$dict_val{$dict_name{$name}->{'id'}}->{$type}->{'name'} = $id;
-			$dict_val{$dict_name{$name}->{'id'}}->{$id}->{'id'} = $type;
+			$dict_val{$name}->{$type}->{'name'} = $id;
+			$dict_val{$name}->{$id}->{'id'} = $type;
 		} elsif ($cmd eq 'vendor') {
 			$dict_vendor_name{$name}{'id'} = $id;
 			$dict_vendor_id{$id}{'name'} = $name;
@@ -1006,7 +1009,7 @@ Carl Declerck <carl@miskatonic.inbe.net> - original design
 Alexander Kapitanenko <kapitan at portaone.com> and Andrew
 Zhilenko <andrew at portaone.com> - later modifications.
 
-Andrew Zhilenko <andrew at portaone.com> is the current module's maintaner at CPAN.
+PortaOne Development Team <perl-radius at portaone.com> is the current module's maintaner at CPAN.
 
 =cut
 
