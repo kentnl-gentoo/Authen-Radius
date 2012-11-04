@@ -4,7 +4,6 @@ README
 LICENSE
 MANIFEST
 Radius.pm
-install-radius-db.PL
 t/decode.t
 t/dictionary.t
 t/digest.t
