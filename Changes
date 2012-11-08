@@ -1,5 +1,8 @@
 Revision history for Perl extension Radius.
 
+0.22 Wed Nov 07 20:27:00 2012
+    - Fix the excessive "types mismatch" warnings on PoD packets
+
 0.21 Mon Oct 29 09:00:00 2012
     - Added support for attribute values for byte and short attribute types
 

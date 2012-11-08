@@ -3,17 +3,16 @@
 # Radius Client module for Perl 5                                           #
 #                                                                           #
 # Written by Carl Declerck <carl@miskatonic.inbe.net>, (c)1997              #
-# All Rights Reserved. See the Perl Artistic License for copying & usage    #
-# policy.                                                                   #
+# All Rights Reserved. See the Perl Artistic License 2.0                    #
+# for copying & usage policy.                                               #
 #                                                                           #
 # Modified by Olexander Kapitanenko <kapitan@portaone.com>,                 #
-#             Andrew Zhilenko <andrew@portaone.com>, 2002-2010.             #
+#             Andrew Zhilenko <andrew@portaone.com>, 2002-2012.             #
 #             and the rest of PortaOne team.                                #
 #                                                                           #
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
 #############################################################################
-# 	$Id: Radius.pm,v 1.51 2012/10/29 07:14:24 andrew Exp $
 
 package Authen::Radius;
 
@@ -35,7 +34,7 @@ require Exporter;
 			DISCONNECT_REQUEST DISCONNECT_ACCEPT DISCONNECT_REJECT
 			COA_REQUEST COA_ACCEPT COA_REJECT COA_ACK COA_NAK);
 
-$VERSION = '0.21';
+$VERSION = '0.22';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -72,8 +71,8 @@ my $HMAC_MD5_BLCKSZ = 64;
 my $RFC3579_MSG_AUTH_ATTR_ID = 80;
 my $RFC3579_MSG_AUTH_ATTR_LEN = 18;
 my %SERVICES = ( 'radius' => 1812, 
-				'radacct' => 1813,
-				'radius-acct' => 1813 );
+                 'radacct' => 1813,
+                 'radius-acct' => 1813 );
 
 sub new {
 	my $class = shift;
@@ -444,90 +443,90 @@ sub encodeValue ($$$$$) {
 
     my ($new_value, $enc_value);
     if (defined $dict_val{$name}{$value}) {
-	$enc_value = $dict_val{$name}{$value}{'id'};
+        $enc_value = $dict_val{$name}{$value}{'id'};
     } else {
-	$enc_value = int($value);
+        $enc_value = $value;
     }
     $type = '' unless defined $type;
     if ($type eq "string") {
-	$new_value = $value;
-	if ($id == 2 && $vendor eq 'not defined' ) {
-	    $self->gen_authenticator();
-	    $new_value = $self->encrypt_pwd($value);
-	}
-	$new_value = substr($new_value, 0, 253);
-                #       if ($vendor eq WIMAX_VENDOR) {
-                            # add the "continuation" byte
-                            # but no support for attribute spli for now
-                #           $value = pack('C', 0). substr($value, 0, 246);
-                #       }
+        $new_value = $value;
+        if ($id == 2 && $vendor eq 'not defined' ) {
+            $self->gen_authenticator();
+            $new_value = $self->encrypt_pwd($value);
+        }
+        $new_value = substr($new_value, 0, 253);
+        #       if ($vendor eq WIMAX_VENDOR) {
+        # add the "continuation" byte
+        # but no support for attribute spli for now
+        #           $value = pack('C', 0). substr($value, 0, 246);
+        #       }
     } elsif ($type eq "integer") {
-	$new_value = pack('N', $enc_value);
+        $new_value = pack('N', int($enc_value));
     } elsif ($type eq "byte") {
-	$new_value = pack('C', $enc_value);
+        $new_value = pack('C', int($enc_value));
     } elsif ($type eq "short") {
-	$new_value = pack('S', $enc_value);
+        $new_value = pack('S', int($enc_value));
     } elsif ($type eq "signed") {
-	# there should be something else, since it is signed
-	$new_value = pack('N', $value);
+        # there should be something else, since it is signed
+        $new_value = pack('N', $value);
     } elsif ($type eq "ipaddr") {
-	$new_value = inet_aton($value);
+        $new_value = inet_aton($value);
     } elsif ($type eq "avpair") {
-	$new_value = $name.'='.$value;
-	$new_value = substr($new_value, 0, 253);
+        $new_value = $name.'='.$value;
+        $new_value = substr($new_value, 0, 253);
 # WiMAX
     } elsif ($type eq "combo-ip") {
-	if ($value =~ m/^\d+\.\d+\.\d+.\d+/) {
-	    # IPv4 address
-	    $new_value = inet_aton($value);
-	} else {
-	    # currently unsupported, use IPv4
-	    $new_value = inet_aton($value);
-	}
+        if ($value =~ m/^\d+\.\d+\.\d+.\d+/) {
+            # IPv4 address
+            $new_value = inet_aton($value);
+        } else {
+            # currently unsupported, use IPv4
+            $new_value = inet_aton($value);
+        }
     } elsif ($type eq "octets") {
-	$new_value = '';
-	foreach my $c (split('', $value)) {
-	    $new_value .= pack('C',ord($c));
-	}
+        $new_value = '';
+        foreach my $c (split('', $value)) {
+            $new_value .= pack('C',ord($c));
+        }
     } elsif ($type eq 'tlv' and ref($value)) {
-	$new_value = '';
-	foreach my $sub_attr (sort { $a->{'TLV_ID'} <=> $b->{'TLV_ID'} } @{$value}) {
-	    my $sub_attr_name = $sub_attr->{'Name'};
-	    my $sub_attr_type = defined $sub_attr->{'Type'} ? $sub_attr->{'Type'} : $dict_name{$sub_attr_name}{'type'};
-	    my $sub_attr_id = defined $dict_name{$sub_attr_name}{'id'} ? $dict_name{$sub_attr_name}{'id'} : int($sub_attr_name);
-	    my $sub_value = $self->encodeValue($vendor, $sub_attr_id, $sub_attr_type, $sub_attr->{'Name'}, $sub_attr->{'Value'});
+        $new_value = '';
+        foreach my $sub_attr (sort { $a->{'TLV_ID'} <=> $b->{'TLV_ID'} } @{$value}) {
+            my $sub_attr_name = $sub_attr->{'Name'};
+            my $sub_attr_type = defined $sub_attr->{'Type'} ? $sub_attr->{'Type'} : $dict_name{$sub_attr_name}{'type'};
+            my $sub_attr_id = defined $dict_name{$sub_attr_name}{'id'} ? $dict_name{$sub_attr_name}{'id'} : int($sub_attr_name);
+            my $sub_value = $self->encodeValue($vendor, $sub_attr_id, $sub_attr_type, $sub_attr->{'Name'}, $sub_attr->{'Value'});
 
-	    if (defined($sub_value)) {
-		$new_value .= pack('C C', $sub_attr_id, length($sub_value)+2).$sub_value;
-	    }
-	}
+            if (defined($sub_value)) {
+                $new_value .= pack('C C', $sub_attr_id, length($sub_value)+2).$sub_value;
+            }
+        }
     } elsif ($type eq 'sublist') {
-	# Digest attributes look like:
-	# Digest-Attributes                = 'Method = "REGISTER"'
-	my $digest = $value;
-	my @pairs;
-	if (ref($digest)) {
-	    next unless ref($digest) eq 'HASH';
-	    foreach my $key (keys %{$digest}) {
-		push @pairs, [ $key => $digest->{$key} ];
-	    }
-	} else {
-                                # string
-	    foreach my $z (split(/\"\; /, $digest)) {
-		my ($subname, $subvalue) = split(/\s+=\s+\"/, $z, 2);
-		$subvalue =~ s/\"$//;
-		push @pairs, [ $subname => $subvalue ];
-	    }
-	}
-	$new_value = '';
-	foreach my $da (@pairs) {
-	    my ($subname, $subvalue) = @{$da};
-	    my $subid = $dict_val{$id}->{$subname}->{'id'};
-	    next unless defined($subid);
-	    $new_value .= pack('C C', $subid, length($subvalue) + 2) . $subvalue;
-	}
+        # Digest attributes look like:
+        # Digest-Attributes                = 'Method = "REGISTER"'
+        my $digest = $value;
+        my @pairs;
+        if (ref($digest)) {
+            next unless ref($digest) eq 'HASH';
+            foreach my $key (keys %{$digest}) {
+                push @pairs, [ $key => $digest->{$key} ];
+            }
+        } else {
+            # string
+            foreach my $z (split(/\"\; /, $digest)) {
+                my ($subname, $subvalue) = split(/\s+=\s+\"/, $z, 2);
+                $subvalue =~ s/\"$//;
+                push @pairs, [ $subname => $subvalue ];
+            }
+        }
+        $new_value = '';
+        foreach my $da (@pairs) {
+            my ($subname, $subvalue) = @{$da};
+            my $subid = $dict_val{$id}->{$subname}->{'id'};
+            next unless defined($subid);
+            $new_value .= pack('C C', $subid, length($subvalue) + 2) . $subvalue;
+        }
     } else {
-	return;
+        return;
     }
     return $new_value;
 }
@@ -1009,7 +1008,8 @@ Carl Declerck <carl@miskatonic.inbe.net> - original design
 Alexander Kapitanenko <kapitan at portaone.com> and Andrew
 Zhilenko <andrew at portaone.com> - later modifications.
 
-PortaOne Development Team <perl-radius at portaone.com> is the current module's maintaner at CPAN.
+PortaOne Development Team <perl-radius at portaone.com> is
+the current module's maintaner at CPAN.
 
 =cut
 
