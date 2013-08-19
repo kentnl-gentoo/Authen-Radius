@@ -1,5 +1,10 @@
 Revision history for Perl extension Radius.
 
+0.23 Sat Aug 17 21:48:00 2013
+    - Clear authenticator as a part of clear_attibutes(), so
+      multiple requests, sent using the same object, will have
+      different authenticators (as they should)
+ 
 0.22 Wed Nov 07 20:27:00 2012
     - Fix the excessive "types mismatch" warnings on PoD packets
 

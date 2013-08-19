@@ -6,9 +6,9 @@
 # All Rights Reserved. See the Perl Artistic License 2.0                    #
 # for copying & usage policy.                                               #
 #                                                                           #
-# Modified by Olexander Kapitanenko <kapitan@portaone.com>,                 #
-#             Andrew Zhilenko <andrew@portaone.com>, 2002-2012.             #
-#             and the rest of PortaOne team.                                #
+# Modified by Olexander Kapitanenko, Andrew Zhilenko                        #
+#             and the rest of PortaOne team (c) 2002-2013                   #
+#             Current maintainer's contact: perl-radius@portaone.com        #
 #                                                                           #
 # See the file 'Changes' in the distrution archive.                         #
 #                                                                           #
@@ -34,7 +34,7 @@ require Exporter;
 			DISCONNECT_REQUEST DISCONNECT_ACCEPT DISCONNECT_REJECT
 			COA_REQUEST COA_ACCEPT COA_REJECT COA_ACK COA_NAK);
 
-$VERSION = '0.22';
+$VERSION = '0.23';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -351,6 +351,7 @@ sub clear_attributes {
 	$self->set_error;
 
 	delete $self->{'attributes'};
+    delete $self->{'authenticator'};
 
 	1;
 }
