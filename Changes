@@ -1,5 +1,15 @@
 Revision history for Perl extension Radius.
 
+0.24 Wed Oct 30 13:21:00 2013
+    - Added support for changing I/O activity timeouts, so that
+      custom retransmission policies can be implemented
+    - Added ACCESS_CHALLENGE packet type definition (thanks to
+      Stephane Billiart for the patch)
+    - Fix the excessive wait on processing broadcasts when
+      at least one of the nodes in node list did not listen on
+      the requested port (a side-effect is that it is now possible
+      to set timeout in floating seconds since the epoch)
+
 0.23 Sat Aug 17 21:48:00 2013
     - Clear authenticator as a part of clear_attibutes(), so
       multiple requests, sent using the same object, will have

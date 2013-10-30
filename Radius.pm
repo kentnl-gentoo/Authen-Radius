@@ -10,7 +10,7 @@
 #             and the rest of PortaOne team (c) 2002-2013                   #
 #             Current maintainer's contact: perl-radius@portaone.com        #
 #                                                                           #
-# See the file 'Changes' in the distrution archive.                         #
+# See the file 'Changes' in the distribution archive.                       #
 #                                                                           #
 #############################################################################
 
@@ -23,18 +23,19 @@ use IO::Select;
 use Digest::MD5;
 use Data::Dumper;
 use Data::HexDump;
+use Time::HiRes qw(time);
 
 use vars qw($VERSION @ISA @EXPORT);
 
 require Exporter;
 
 @ISA = qw(Exporter);
-@EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT
+@EXPORT = qw(ACCESS_REQUEST ACCESS_ACCEPT ACCESS_REJECT ACCESS_CHALLENGE
 			ACCOUNTING_REQUEST ACCOUNTING_RESPONSE ACCOUNTING_STATUS
 			DISCONNECT_REQUEST DISCONNECT_ACCEPT DISCONNECT_REJECT
 			COA_REQUEST COA_ACCEPT COA_REJECT COA_ACK COA_NAK);
 
-$VERSION = '0.23';
+$VERSION = '0.24';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;	# probably better than starting from 0
@@ -43,13 +44,14 @@ my $debug = 0;
 
 use constant WIMAX_VENDOR => '24757';
 use constant WIMAX_CONTINUATION_BIT => 0b10000000;
+
 #
 # we'll need to predefine these attr types so we can do simple password
 # verification without having to load a dictionary
 #
 
-$dict_id{'not defined'}{1}{'type'} = 'string';	# set 'username' attr type to string
-$dict_id{'not defined'}{2}{'type'} = 'string';	# set 'password' attr type to string
+$dict_id{'not defined'}{1}{'type'} = 'string';	# set 'Username' attr type to string
+$dict_id{'not defined'}{2}{'type'} = 'string';	# set 'Password' attr type to string
 $dict_id{'not defined'}{4}{'type'} = 'ipaddr';	# set 'NAS-IP-Address' attr type to string
 
 use constant ACCESS_REQUEST               => 1;
@@ -58,19 +60,20 @@ use constant ACCESS_REJECT                => 3;
 use constant ACCOUNTING_REQUEST           => 4;
 use constant ACCOUNTING_RESPONSE          => 5;
 use constant ACCOUNTING_STATUS            => 6;
+use constant ACCESS_CHALLENGE             => 11;
 use constant DISCONNECT_REQUEST           => 40;
 use constant DISCONNECT_ACCEPT            => 41;
-use constant DISCONNECT_REJECT            => 42; 
-use constant COA_REQUEST                  => 43; 
+use constant DISCONNECT_REJECT            => 42;
+use constant COA_REQUEST                  => 43;
 use constant COA_ACCEPT                   => 44;
 use constant COA_ACK                      => 44;
-use constant COA_REJECT                   => 45; 
-use constant COA_NAK                      => 45; 
+use constant COA_REJECT                   => 45;
+use constant COA_NAK                      => 45;
 
 my $HMAC_MD5_BLCKSZ = 64;
 my $RFC3579_MSG_AUTH_ATTR_ID = 80;
 my $RFC3579_MSG_AUTH_ATTR_LEN = 18;
-my %SERVICES = ( 'radius' => 1812, 
+my %SERVICES = ( 'radius' => 1812,
                  'radacct' => 1813,
                  'radius-acct' => 1813 );
 
@@ -84,7 +87,7 @@ sub new {
 
 	$self->set_error;
 	$debug = $h{'Debug'};
-    
+
     if (!$h{'Host'} && !$h{'NodeList'}) {
 	    return $self->set_error('ENOHOST');
     }
@@ -114,8 +117,8 @@ sub new {
 				LocalAddr => $self->{'localaddr'},
 	);
 	if ($h{'NodeList'}) {
-		# contains resolved node list in text respresentation 
-		$self->{'node_list_a'} = {}; 
+		# contains resolved node list in text representation
+		$self->{'node_list_a'} = {};
 		foreach my $node_a (@{$h{'NodeList'}}) {
 			my ($n_host, $n_port) = split(/:/, $node_a);
 			if (!$n_port) {
@@ -127,8 +130,8 @@ sub new {
 				next;
 			}
 			print STDERR "Adding ".inet_ntoa($hostinfo[4]).':'.$n_port." to node list.\n" if $debug;
-			# store splitted address to avoid additional parsing later
-			$self->{'node_list_a'}->{inet_ntoa($hostinfo[4]).':'.$n_port} = 
+			# store split address to avoid additional parsing later
+			$self->{'node_list_a'}->{inet_ntoa($hostinfo[4]).':'.$n_port} =
                     [inet_ntoa($hostinfo[4]), $n_port];
 		}
 		if (!scalar(keys %{$self->{'node_list_a'}})) {
@@ -139,7 +142,7 @@ sub new {
 			if (scalar(@hostinfo)) {
 				my $act_addr_a = inet_ntoa($hostinfo[4]).':'.$port;
 				if (exists($self->{'node_list_a'}->{$act_addr_a})) {
-					$self->{'node_addr_a'} = $act_addr_a; 
+					$self->{'node_addr_a'} = $act_addr_a;
 				} else {
 					print STDERR "'$host' doesn't exist in node list - ignoring it!\n" if $debug;
 				}
@@ -157,7 +160,7 @@ sub new {
 	if ($host) {
 		$io_sock_args{'PeerAddr'} = $host;
 		$io_sock_args{'PeerPort'} = $port;
-		$self->{'sock'} = IO::Socket::INET->new(%io_sock_args) 
+		$self->{'sock'} = IO::Socket::INET->new(%io_sock_args)
 			or return $self->set_error('ESOCKETFAIL', $@);
 	}
 	$self;
@@ -171,7 +174,7 @@ sub send_packet {
 	if (!$retransmit) {
 		$request_id = ($request_id + 1) & 0xff;
 	}
-	$self->set_error;    
+	$self->set_error;
 	if ($type == ACCOUNTING_REQUEST || $type == DISCONNECT_REQUEST
 		|| $type == COA_REQUEST) {
 		$self->{'authenticator'} = "\0" x 16;
@@ -184,16 +187,16 @@ sub send_packet {
 	if ($self->{'message_auth'} && ($type == ACCESS_REQUEST)) {
 		$length += $RFC3579_MSG_AUTH_ATTR_LEN;
 		$data = pack('C C n', $type, $request_id, $length)
-				. $self->{'authenticator'}  
+				. $self->{'authenticator'}
 				. $self->{'attributes'}
-				. pack('C C', $RFC3579_MSG_AUTH_ATTR_ID, $RFC3579_MSG_AUTH_ATTR_LEN) 
+				. pack('C C', $RFC3579_MSG_AUTH_ATTR_ID, $RFC3579_MSG_AUTH_ATTR_LEN)
 				. "\0" x ($RFC3579_MSG_AUTH_ATTR_LEN - 2);
 
-		my $msg_authenticator = $self->hmac_md5($data, $self->{'secret'}); 
-		$data = pack('C C n', $type, $request_id, $length) 
-				. $self->{'authenticator'} 
+		my $msg_authenticator = $self->hmac_md5($data, $self->{'secret'});
+		$data = pack('C C n', $type, $request_id, $length)
+				. $self->{'authenticator'}
 				. $self->{'attributes'}
-				. pack('C C', $RFC3579_MSG_AUTH_ATTR_ID, $RFC3579_MSG_AUTH_ATTR_LEN) 
+				. pack('C C', $RFC3579_MSG_AUTH_ATTR_ID, $RFC3579_MSG_AUTH_ATTR_LEN)
 				. $msg_authenticator;
 		if ($debug) {
 			print STDERR "RFC3579 Message-Authenticator: "._ascii_to_hex($msg_authenticator).
@@ -230,7 +233,7 @@ sub send_packet {
 				if ($debug) { print STDERR 'Sending request to: '.$node."\n"; }
 				$io_sock_args{'PeerAddr'} = $self->{'node_list_a'}->{$node}->[0];
 				$io_sock_args{'PeerPort'} = $self->{'node_list_a'}->{$node}->[1];
-				my $new_sock = IO::Socket::INET->new(%io_sock_args) 
+				my $new_sock = IO::Socket::INET->new(%io_sock_args)
 					or return $self->set_error('ESOCKETFAIL', $@);
 				$res = $new_sock->send($data) || $self->set_error('ESENDFAIL', $!);
 				if ($res) {
@@ -259,10 +262,11 @@ sub recv_packet {
 	my $timeout = $self->{'timeout'};
 	my @ready;
 	my $from_addr_n;
+	my ($start_time, $end_time);
 	while ($timeout > 0){
-		my $start_time = time();
-		@ready = $sh->can_read($self->{'timeout'}) or return $self->set_error('ETIMEOUT', $!);
-		my $end_time = time();
+		$start_time = time();
+		@ready = $sh->can_read($timeout) or return $self->set_error('ETIMEOUT', $!);
+		$end_time = time();
 		$timeout -= $end_time - $start_time;
 		$from_addr_n = $ready[0]->recv($data, 65536);
 		if (defined($from_addr_n)) {
@@ -275,14 +279,14 @@ sub recv_packet {
 		}
 	}
 
-	if ($debug) { 
-		print STDERR "Received response:\n"; 
+	if ($debug) {
+		print STDERR "Received response:\n";
 		print STDERR HexDump($data);
 	}
 
 	if (defined($self->{'sock_list'})) {
 		# the sending attempt was 'broadcast' to all cluster nodes
-		# switcking to single active node
+		# switching to single active node
 		$self->{'sock'} = $ready[0];
 		$self->{'sock_list'} = undef;
 		my ($node_port, $node_iaddr) = sockaddr_in($from_addr_n);
@@ -294,11 +298,11 @@ sub recv_packet {
 	if ($detect_bad_id && defined($id) && ($id != $request_id) ) {
 		return $self->set_error('EBADID');
 	}
-	
+
 	if ($auth ne $self->calc_authenticator($type, $id, $length, $resp_attributes)) {
 		return $self->set_error('EBADAUTH');
 	}
-	# rewrtite  attributes only in case of valid response
+	# rewrite attributes only in case of a valid response
 	$self->{'attributes'} = $resp_attributes;
 	my $rfc3579_msg_auth;
 	foreach my $a ($self->get_attributes()) {
@@ -308,9 +312,9 @@ sub recv_packet {
 		}
 	}
 	if (defined($rfc3579_msg_auth)) {
-		$self->replace_attr_value($RFC3579_MSG_AUTH_ATTR_ID, 
+		$self->replace_attr_value($RFC3579_MSG_AUTH_ATTR_ID,
 				"\0" x ($RFC3579_MSG_AUTH_ATTR_LEN - 2));
-		my $hmac_data = pack('C C n', $type, $id, $length) 
+		my $hmac_data = pack('C C n', $type, $id, $length)
 						. $self->{'authenticator'}
 						. $self->{'attributes'};
 		my $calc_hmac = $self->hmac_md5($hmac_data, $self->{'secret'});
@@ -405,7 +409,7 @@ sub get_attributes {
 		} else {
 			print STDERR "Unknown type for attribute with id:'$id'. Check Radius dictionaries!\n" if $debug;
 		}
-		
+
 		if (defined $value) {
 			$value = $dict_val{$name}{$value}{'name'} if defined $dict_val{$name}{$value};
 		}
@@ -420,10 +424,10 @@ sub get_attributes {
 
 	return @a;
 }
-# it used to be 
-# $vendor = defined $a->{'Vendor'} ? 
-#    ( defined $dict_vendor_name{ $a->{'Vendor'} }{'id'} ? $dict_vendor_name{ $a->{'Vendor'} }{'id'} : int($a->{'Vendor'}) ) 
-#    : ( defined $dict_name{$a->{'Name'}}{'vendor'} 
+# it used to be
+# $vendor = defined $a->{'Vendor'} ?
+#    ( defined $dict_vendor_name{ $a->{'Vendor'} }{'id'} ? $dict_vendor_name{ $a->{'Vendor'} }{'id'} : int($a->{'Vendor'}) )
+#    : ( defined $dict_name{$a->{'Name'}}{'vendor'}
 #	? $dict_vendor_name{ $dict_name{$a->{'Name'}}{'vendor'} }{'id'} : 'not defined' );
 
 sub vendorID ($) {
@@ -458,7 +462,7 @@ sub encodeValue ($$$$$) {
         $new_value = substr($new_value, 0, 253);
         #       if ($vendor eq WIMAX_VENDOR) {
         # add the "continuation" byte
-        # but no support for attribute spli for now
+        # but no support for attribute splitting for now
         #           $value = pack('C', 0). substr($value, 0, 246);
         #       }
     } elsif ($type eq "integer") {
@@ -565,7 +569,7 @@ sub add_attributes {
 		    push @{$tlv_list}, $attr;
 		}
 	    } else {
-		# normal attrbute, just copy over
+		# normal attribute, just copy over
 		push @a, $attr;
 	    }
 	}
@@ -595,7 +599,7 @@ sub add_attributes {
 		    } else {
 			$value = pack('N C C', $vendor, $id, length($value) + 2) . $value;
 		    }
-		    # add the normal RADIUS attribute header: type + length 
+		    # add the normal RADIUS attribute header: type + length
 		    $self->{'attributes'} .= pack('C C', $dict_name{'Vendor-Specific'}{'id'}, length($value) + 2) . $value;
 		}
 	}
@@ -633,8 +637,8 @@ sub calc_authenticator {
 
 	$hdr = pack('C C n', $type, $id, $length);
 	$ct = Digest::MD5->new;
-	$ct->add ($hdr, $self->{'authenticator'}, 
-				(defined($attributes)) ? $attributes : $self->{'attributes'}, 
+	$ct->add ($hdr, $self->{'authenticator'},
+				(defined($attributes)) ? $attributes : $self->{'attributes'},
 				$self->{'secret'});
 	$ct->digest();
 }
@@ -744,6 +748,20 @@ sub load_dictionary {
 	}
 	$fh->close;
 #	print Dumper(\%dict_name);
+	1;
+}
+
+sub set_timeout {
+	my ($self, $timeout) = @_;
+
+	$self->{'timeout'} = $timeout;
+	$self->{'sock'}->timeout($timeout) if (defined $self->{'sock'});
+	if (defined $self->{'sock_list'}) {
+		foreach my $sock (@{$self->{'sock_list'}}) {
+			$sock->timeout($timeout);
+		}
+	}
+
 	1;
 }
 
@@ -864,14 +882,14 @@ Authen::Radius - provide simple Radius client facilities
 
 =head1  DESCRIPTION
 
-The C<Authen::Radius> module provides a simple class that allows you to 
+The C<Authen::Radius> module provides a simple class that allows you to
 send/receive Radius requests/responses to/from a Radius server.
 
 =head1 CONSTRUCTOR
 
 =over 4
 
-=item new ( Host => HOST, Secret => SECRET [, TimeOut => TIMEOUT] 
+=item new ( Host => HOST, Secret => SECRET [, TimeOut => TIMEOUT]
 	[,Service => SERVICE] [, Debug => Bool] [, LocalAddr => hostname[:port]]
 	[,Rfc3579MessageAuth => Bool] [,NodeList= NodeListArrayRef])
 
@@ -888,23 +906,23 @@ C<radius> and 1813 for C<radius-acct>.
 Optional parameter C<Debug> with a Perl "true" value turns on debugging
 (verbose mode).
 
-Optional parameter C<LocalAddr> may contain local IP/host bind address from 
+Optional parameter C<LocalAddr> may contain local IP/host bind address from
 which RADIUS packets are sent.
 
 Optional parameter C<Rfc3579MessageAuth> with a Perl "true" value turns on generating
 of Message-Authenticator for Access-Request (RFC3579, section 3.2).
 
-Optional parameter C<NodeList> may contain a Perl reference to an array, containing a list of 
-Radius Cluster nodes. Each nodes in the list can be specified using a hostname or IP (with an optional 
+Optional parameter C<NodeList> may contain a Perl reference to an array, containing a list of
+Radius Cluster nodes. Each nodes in the list can be specified using a hostname or IP (with an optional
 port number), i.e. 'radius1.mytel.com' or 'radius.myhost.com:1812'. Radius Cluster contains a set of Radius
 servers, at any given moment of time only one server is considered to be "active"
-(so requests are send to this server).  
-How the active node is determined? Initially in addition to the C<NodeList> 
+(so requests are send to this server).
+How the active node is determined? Initially in addition to the C<NodeList>
 parameter you may supply the C<Host> parameter and specify which server should
 become the first active node. If this parameter is absent, or the current
 active node does not reply anymore, the process of "discovery" will be
 performed: a request will be sent to all nodes and the consecutive communication
-continues with the node, which will be the first to reply. 
+continues with the node, which will be the first to reply.
 
 =back
 
@@ -933,21 +951,21 @@ returns 1 if the C<PASSWORD> is correct, or undef otherwise.
 =item add_attributes ( { Name => NAME, Value => VALUE [, Type => TYPE] [, Vendor => VENDOR] }, ... )
 
 Adds any number of Radius attributes to the current Radius object. Attributes
-are specified as a list of anon hashes. They may be C<Name>d with their 
-dictionary name (provided a dictionary has been loaded first), or with 
-their raw Radius attribute-type values. The C<Type> pair should be specified 
-when adding attributes that are not in the dictionary (or when no dictionary 
+are specified as a list of anon hashes. They may be C<Name>d with their
+dictionary name (provided a dictionary has been loaded first), or with
+their raw Radius attribute-type values. The C<Type> pair should be specified
+when adding attributes that are not in the dictionary (or when no dictionary
 was loaded). Values for C<TYPE> can be 'C<string>', 'C<integer>', 'C<ipaddr>' or 'C<avpair>'.
 
 =item get_attributes
 
 Returns a list of references to anon hashes with the following key/value
 pairs : { Name => NAME, Code => RAWTYPE, Value => VALUE, RawValue =>
-RAWVALUE, Vendor => VENDOR }. Each hash represents an attribute in the current object. The 
-C<Name> and C<Value> pairs will contain values as translated by the 
-dictionary (if one was loaded). The C<Code> and C<RawValue> pairs always 
+RAWVALUE, Vendor => VENDOR }. Each hash represents an attribute in the current object. The
+C<Name> and C<Value> pairs will contain values as translated by the
+dictionary (if one was loaded). The C<Code> and C<RawValue> pairs always
 contain the raw attribute type & value as received from the server.
-If some attribute doesn't exist in dictionary or type of attribute not specified 
+If some attribute doesn't exist in dictionary or type of attribute not specified
 then corresponding C<Value> undefined and C<Name> set to attribute ID (C<Code>
 value).
 
@@ -966,20 +984,25 @@ Returns the number of bytes sent, or undef on failure.
 
 If the RETRANSMIT parameter is provided and contains a non-zero value, then
 it is considered that we are re-sending the request, which was already sent
-previously. In this case the previous value of packet indentifier is used. 
+previously. In this case the previous value of packet identifier is used.
 
 =item recv_packet ( DETECT_BAD_ID )
 
 Receives a Radius reply packet. Returns the Radius Reply type (see possible
-values for C<REQUEST_TYPE> in method C<send_packet>) or undef on failure. Note 
-that failure may be due to a failed recv() or a bad Radius response 
+values for C<REQUEST_TYPE> in method C<send_packet>) or undef on failure. Note
+that failure may be due to a failed recv() or a bad Radius response
 authenticator. Use C<get_error> to find out.
 
 If the DETECT_BAD_ID parameter is supplied and contains a non-zero value, then
-calculation of the packet indentifier is performed before authenticator check 
-and EBADID error returned in case when packet indentifier from the response
-doesn't match to the request. If the DETECT_BAD_ID is not provided or contains zero value then 
+calculation of the packet identifier is performed before authenticator check
+and EBADID error returned in case when packet identifier from the response
+doesn't match to the request. If the DETECT_BAD_ID is not provided or contains zero value then
 EBADAUTH returned in such case.
+
+=item set_timeout ( TIMEOUT )
+
+Sets socket I/O activity timeout. C<TIMEOUT> should be specified in floating seconds
+since the epoch.
 
 =item get_error
 
@@ -993,13 +1016,13 @@ for the specified C<ERRORCODE>.
 
 =item error_comment
 
-Returns the last error explanation for the current object. Error explanation 
+Returns the last error explanation for the current object. Error explanation
 is generated by system call.
 
 =item get_active_node
 
-Returns currently active radius node in standard numbers-and-dots notation with 
-port delimited by colon. 
+Returns currently active radius node in standard numbers-and-dots notation with
+port delimited by colon.
 
 =back
 
@@ -1010,7 +1033,7 @@ Alexander Kapitanenko <kapitan at portaone.com> and Andrew
 Zhilenko <andrew at portaone.com> - later modifications.
 
 PortaOne Development Team <perl-radius at portaone.com> is
-the current module's maintaner at CPAN.
+the current module's maintainer at CPAN.
 
 =cut
 
