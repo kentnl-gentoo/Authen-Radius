@@ -1,11 +1,12 @@
 use strict;
 use warnings;
-use Test::More tests => 8;
+use Test::More tests => 9;
 use File::Spec ();
+use Test::NoWarnings;
 
 BEGIN { use_ok('Authen::Radius') };
 
-my $auth = Authen::Radius->new(Host => '127.0.0.1', Secret => 'secret', Debug => 1);
+my $auth = Authen::Radius->new(Host => '127.0.0.1', Secret => 'secret', Debug => 0);
 ok($auth, 'object created');
 
 my $freeradius_path = $ENV{TEST_FREERADIUS_PATH} || '/usr/share/freeradius';

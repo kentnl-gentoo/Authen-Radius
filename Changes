@@ -1,5 +1,10 @@
 Revision history for Perl extension Radius.
 
+0.25.1 Thu Dec 08 14:38:44 2016
+    - Require Perl v5.10+
+    - Fixed warnings in tests
+    - Fix sublist attribute type encoding
+
 0.25 Tue Dec 06 12:25:00 2016
     - Added support for Status-Server requests (RFC 5997)
     - Added support for IPv6 (RFC 3162)

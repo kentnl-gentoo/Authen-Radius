@@ -25,4 +25,5 @@ requires:
   Digest::MD5: '2.2'
   IO: '1.12'
   Net::IP: '1.26'
-version: '0.25'
+  perl: v5.10.0
+version: v0.25.1

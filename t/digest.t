@@ -1,6 +1,7 @@
 use strict;
 use warnings;
-use Test::More;
+use Test::More tests => 3;
+use Test::NoWarnings;
 
 BEGIN { use_ok('Authen::Radius') };
 
@@ -19,5 +20,3 @@ my $etalon_digest = hex_to_ascii("750c783e6ab0b503eaa86e310a5db738");
 
 my $digest = Authen::Radius::hmac_md5( undef, $data, $key );
 cmp_ok( $digest, 'eq', $etalon_digest );
-
-done_testing();

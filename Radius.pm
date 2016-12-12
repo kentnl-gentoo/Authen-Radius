@@ -17,6 +17,8 @@
 package Authen::Radius;
 
 use strict;
+use warnings;
+use v5.10;
 use FileHandle;
 use IO::Socket;
 use IO::Select;
@@ -37,7 +39,7 @@ require Exporter;
             STATUS_SERVER
             COA_REQUEST COA_ACCEPT COA_REJECT COA_ACK COA_NAK);
 
-$VERSION = '0.25';
+$VERSION = '0.25.1';
 
 my (%dict_id, %dict_name, %dict_val, %dict_vendor_id, %dict_vendor_name );
 my ($request_id) = $$ & 0xff;   # probably better than starting from 0
@@ -690,7 +692,7 @@ sub _encode_sublist {
     $value = '';
     foreach my $da (@pairs) {
         my ( $subname, $subvalue ) = @{$da};
-        my $subid = $dict_val{$id}->{$subname}->{id};
+        my $subid = $dict_val{$name}->{$subname}->{id};
         next if ( !defined($subid) );
         $value .= pack( 'CC', $subid, length($subvalue) + 2 ) . $subvalue;
     }

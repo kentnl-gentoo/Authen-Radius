@@ -38,10 +38,11 @@
             "Data::HexDump" : "0.02",
             "Digest::MD5" : "2.2",
             "IO" : "1.12",
-            "Net::IP" : "1.26"
+            "Net::IP" : "1.26",
+            "perl" : "v5.10.0"
          }
       }
    },
    "release_status" : "stable",
-   "version" : "0.25"
+   "version" : "v0.25.1"
 }
